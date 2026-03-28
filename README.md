@@ -247,6 +247,11 @@ Yes. Update `.env` with your own `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`.
 - LM Studio for local OpenAI-compatible model serving
 - The open-source community
 
+## Author
+
+**Alex Li**  
+Email: ncorecpu@gmail.com
+
 ## License
 
 This project is released under the **[MIT License](./LICENSE)**.

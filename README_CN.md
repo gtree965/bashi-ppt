@@ -247,6 +247,11 @@ npm run build
 - LM Studio 用于本地 OpenAI 兼容模型服务
 - 开源社区
 
+## 作者
+
+**Alex Li**  
+Email: ncorecpu@gmail.com
+
 ## 许可证
 
 本项目采用 **[MIT License](./LICENSE)** 发布。
