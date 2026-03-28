@@ -1,0 +1,13 @@
+{
+  "id": "teaching",
+  "name": "课堂教学 (Classroom)",
+  "description": "适合编程教学、课堂演示",
+  "theme": "clean_blue",
+  "default_slides": 8,
+  "default_scenario": "teaching",
+  "layout_mapping": {
+    "title": "TitleCenterLayout",
+    "content": "ContentBulletLayout",
+    "conclusion": "ConclusionLayout"
+  }
+}

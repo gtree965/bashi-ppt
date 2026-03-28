@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+.venv/
+node_modules/
+frontend/dist/
+slideforge.log
+*.egg-info/
+.DS_Store
+/*.pptx
+/test_outline_*.json

@@ -1,0 +1,13 @@
+{
+  "id": "church",
+  "name": "教会讲座 (Church)",
+  "description": "适合主日学、查经班、讲座",
+  "theme": "church_grace",
+  "default_slides": 10,
+  "default_scenario": "church",
+  "layout_mapping": {
+    "title": "TitleCenterLayout",
+    "content": "ContentBulletLayout",
+    "conclusion": "ConclusionLayout"
+  }
+}
