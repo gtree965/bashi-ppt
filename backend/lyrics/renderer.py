@@ -15,6 +15,7 @@ from pptx.util import Pt
 from pptx.enum.text import PP_ALIGN
 from pptx.oxml.ns import qn
 
+from lyrics.chinese_script import convert_text
 from renderer.utils import hex_to_rgb, set_font
 from renderer.slide_layouts import SLIDE_WIDTH, SLIDE_HEIGHT
 
@@ -280,7 +281,8 @@ class LyricsPPTXRenderer:
 
         primary_script = _get_script_for_lang(lang_cfg.get("primary", "zh"))
         if primary_script == "zh":
-            run.text = "阿们"
+            amen_text = "阿们"
+            run.text = convert_text(amen_text, lang_cfg.get("script_conversion", "original"))
         else:
             run.text = "Amen"
 

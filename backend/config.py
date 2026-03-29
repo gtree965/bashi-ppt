@@ -25,7 +25,7 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "16384"))
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "1200"))
 
 # --- Flask ---
-FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
+FLASK_PORT = int(os.getenv("FLASK_PORT", "5100"))
 FLASK_DEBUG = os.getenv("FLASK_DEBUG", "false").lower() == "true"
 
 # --- Paths ---

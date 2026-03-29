@@ -159,6 +159,7 @@ class GeneratePptxRequest(BaseModel):
 
 LyricsLanguageMode = Literal["single", "bilingual"]
 LyricsThemeType = Literal["classic_dark", "deep_blue", "warm_dark"]
+LyricsChineseScriptMode = Literal["original", "to_simplified", "to_traditional"]
 
 LYRICS_LANGUAGE_OPTIONS = [
     {"code": "zh", "label": "中文", "native_label": "中文", "script": "zh", "default_font": "Microsoft YaHei"},
@@ -180,8 +181,15 @@ LYRICS_THEMES_META = [
 
 LYRICS_MODE_LIMITS = {
     "single": {"min_lines": 2, "max_lines": 4, "default_lines": 4},
+    "single_extended": {"min_lines": 2, "max_lines": 6, "default_lines": 4},
     "bilingual": {"min_lines": 2, "max_lines": 3, "default_lines": 2},
 }
+
+LYRICS_CHINESE_SCRIPT_OPTIONS = [
+    {"id": "original", "name": "原文", "name_en": "Original"},
+    {"id": "to_simplified", "name": "转为简体", "name_en": "To Simplified"},
+    {"id": "to_traditional", "name": "转为繁體", "name_en": "To Traditional"},
+]
 
 VALID_LANGUAGE_CODES = {opt["code"] for opt in LYRICS_LANGUAGE_OPTIONS}
 
@@ -214,12 +222,14 @@ class LyricsRequest(BaseModel):
 
     lyrics: str = Field(min_length=1, max_length=20000)
     title: str = Field(min_length=1, max_length=100)
-    lines_per_slide: int = Field(default=4, ge=2, le=4)
+    lines_per_slide: int = Field(default=4, ge=2, le=6)
     theme: LyricsThemeType = "classic_dark"
     language_mode: LyricsLanguageMode = "single"
+    chinese_script_mode: LyricsChineseScriptMode = "original"
+    extended_single_lines: bool = False
     language_config: LanguageConfig
     add_title_slide: bool = True
-    add_amen_slide: bool = True
+    add_amen_slide: bool = False
 
     @model_validator(mode="after")
     def validate_language_consistency(self):
@@ -228,6 +238,10 @@ class LyricsRequest(BaseModel):
                 raise ValueError("bilingual mode requires a secondary language")
             if self.language_config.secondary == self.language_config.primary:
                 raise ValueError("primary and secondary languages must be different in bilingual mode")
+            if self.chinese_script_mode != "original":
+                raise ValueError("chinese script conversion is only available in single-language Chinese mode")
+            if self.extended_single_lines:
+                raise ValueError("extended single-line mode is only available in single-language mode")
             limits = LYRICS_MODE_LIMITS["bilingual"]
             if self.lines_per_slide < limits["min_lines"] or self.lines_per_slide > limits["max_lines"]:
                 raise ValueError(
@@ -236,6 +250,15 @@ class LyricsRequest(BaseModel):
                 )
         if self.language_mode == "single":
             self.language_config.secondary = None
+            if self.language_config.primary != "zh" and self.chinese_script_mode != "original":
+                raise ValueError("chinese script conversion is only available when the language is zh")
+            limits_key = "single_extended" if self.extended_single_lines else "single"
+            limits = LYRICS_MODE_LIMITS[limits_key]
+            if self.lines_per_slide < limits["min_lines"] or self.lines_per_slide > limits["max_lines"]:
+                raise ValueError(
+                    f"single mode requires lines_per_slide between "
+                    f"{limits['min_lines']} and {limits['max_lines']}"
+                )
         return self
 
 
@@ -281,6 +304,8 @@ def format_validation_errors(exc: ValidationError) -> tuple[str, str]:
             "lines_per_slide": "每页行数",
             "theme": "主题样式",
             "language_mode": "语言模式",
+            "chinese_script_mode": "中文转换",
+            "extended_single_lines": "单语扩展行数",
             "language_config": "语言配置",
             "primary": "主语言",
             "secondary": "副语言",
@@ -303,6 +328,8 @@ def format_validation_errors(exc: ValidationError) -> tuple[str, str]:
             "lines_per_slide": "lines per slide",
             "theme": "theme",
             "language_mode": "language mode",
+            "chinese_script_mode": "Chinese script conversion",
+            "extended_single_lines": "extended single-line mode",
             "language_config": "language config",
             "primary": "primary language",
             "secondary": "secondary language",

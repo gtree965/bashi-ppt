@@ -8,7 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
+# dist is tracked — shipped pre-built so users don't need npm
 dist-ssr
 *.local
 

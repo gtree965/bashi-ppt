@@ -75,6 +75,15 @@ if errorlevel 1 (
 )
 echo [OK] Dependencies ready >> "%LOGFILE%"
 
+echo [SETUP] Checking OpenCC...
+"%PYTHON_EXE%" "%~dp0scripts\ensure_opencc.py" >> "%LOGFILE%" 2>&1
+if errorlevel 1 (
+    echo [ERROR] Failed to install OpenCC dependency.
+    echo [ERROR] OpenCC setup failed >> "%LOGFILE%"
+    pause
+    exit /b 1
+)
+
 REM 5. Check frontend dist
 if not exist "%~dp0frontend\dist\index.html" (
     echo [ERROR] Frontend build not found. Expected frontend\dist\index.html
@@ -97,7 +106,7 @@ if %errorlevel% neq 0 (
 REM 7. Start Flask
 echo.
 echo [START] Starting SlideForge server...
-echo [URL]   Open browser: http://localhost:5000
+echo [URL]   Open browser: http://localhost:5100
 echo.
 echo Press Ctrl+C to stop the server.
 echo.

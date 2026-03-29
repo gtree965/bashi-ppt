@@ -17,7 +17,10 @@ Bashi PPT, formerly called SlideForge, is a local-first AI presentation builder 
 - Automatic theme mapping for presentation mode
 - Pure Python PPTX rendering with Chinese font handling and text fitting
 - Hymn lyrics workflow with single-language and bilingual projection slides
+- Optional Traditional/Simplified Chinese conversion for single-language Chinese lyrics
+- Optional extended single-language pagination up to 6 lines per slide
 - Optional title and amen slides for lyric decks
+- Windows portable launcher with embedded Python
 - Frontend and backend served together through Flask for a simple local setup
 
 ## Current Release Scope
@@ -43,28 +46,34 @@ Notes:
 
 ## Quick Start
 
-### Windows
+### Windows Portable Edition
 
 ```bat
-scripts\start.bat
-```
-
-### macOS / Linux
-
-```bash
-chmod +x scripts/start.sh
-./scripts/start.sh
+run_portable.bat
 ```
 
 Then open:
 
 ```text
-http://localhost:5000
+http://localhost:5100
 ```
 
-The startup scripts create a virtual environment if needed, install Python dependencies, build the frontend if `frontend/dist` is missing, and start the Flask server.
+The portable launcher:
+
+- uses the bundled embedded Python on Windows
+- installs backend dependencies automatically
+- ensures OpenCC is available for Traditional/Simplified Chinese conversion
+- serves the prebuilt frontend from `frontend/dist`
+- starts the app on port `5100`
+
+Notes:
+
+- `Presentation PPT` still requires LM Studio or another OpenAI-compatible endpoint.
+- `Hymn Lyrics PPT` can run without any LLM.
 
 ## Manual Setup
+
+Manual setup is recommended for development, for macOS / Linux, or if you do not want to use the Windows portable bundle.
 
 ### 1. Configure the backend
 
@@ -78,7 +87,7 @@ LLM_API_KEY=lm-studio
 LLM_MODEL=qwen3.5-4b
 LLM_MAX_TOKENS=16384
 LLM_TIMEOUT=360
-FLASK_PORT=5000
+FLASK_PORT=5100
 ```
 
 ### 2. Install backend dependencies
@@ -116,6 +125,12 @@ cd backend
 python app.py
 ```
 
+Then open:
+
+```text
+http://localhost:5100
+```
+
 ## Development
 
 For frontend development with Vite:
@@ -133,7 +148,7 @@ cd backend
 python app.py
 ```
 
-The Vite config proxies `/api` requests to the Flask backend on port `5000`.
+The Vite config proxies `/api` requests to the Flask backend on port `5100`.
 
 ## Main Features
 
@@ -150,6 +165,8 @@ The Vite config proxies `/api` requests to the Flask backend on port `5000`.
 - Paste raw hymn lyrics
 - Single-language or bilingual mode
 - Language dropdowns instead of fixed language presets
+- Optional Traditional/Simplified Chinese conversion in single-language Chinese mode
+- Optional extended single-language pagination up to 6 lines per slide
 - Smart section parsing and slide splitting
 - Projection-oriented dark themes
 - Preview before export
@@ -170,9 +187,11 @@ The Vite config proxies `/api` requests to the Flask backend on port `5000`.
 1. Open the `Hymn Lyrics PPT` tab.
 2. Enter the song title and paste the lyrics.
 3. Choose single-language or bilingual mode.
-4. Adjust lines per slide and theme.
-5. Preview pagination.
-6. Export the lyric deck as a PowerPoint file.
+4. If needed, enable Chinese script conversion or extended single-language line count.
+5. Adjust lines per slide and theme.
+6. Optionally enable a title slide or amen slide.
+7. Preview pagination.
+8. Export the lyric deck as a PowerPoint file.
 
 ## Project Structure
 
@@ -230,6 +249,10 @@ The renderer already applies text fitting, but extremely long titles or dense co
 ### Does the hymn workflow need LM Studio?
 
 No. Hymn lyric generation is a local parsing and rendering workflow and can run without any LLM.
+
+### Does Chinese script conversion need internet access?
+
+No. Traditional/Simplified Chinese conversion is handled locally through OpenCC after the dependency is installed.
 
 ### Why is outline generation slow?
 

@@ -7,7 +7,7 @@ import requests
 import json
 
 def test_generate_pptx():
-    url = "http://127.0.0.1:5000/api/generate-pptx"
+    url = "http://127.0.0.1:5100/api/generate-pptx"
     
     payload = {
         "template_id": "teaching",
@@ -57,7 +57,7 @@ def test_generate_pptx():
                 print(response.text)
     except Exception as e:
         print(f"[FAIL] Error connecting to server: {e}")
-        print("[TIP] Make sure the Flask server is running on port 5000.")
+        print("[TIP] Make sure the Flask server is running on port 5100.")
 
 if __name__ == "__main__":
     test_generate_pptx()

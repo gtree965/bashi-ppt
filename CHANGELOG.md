@@ -14,7 +14,9 @@ Initial public release.
 - Pure local PowerPoint rendering with text fitting and Chinese font handling
 - Hymn lyrics workflow with single-language and bilingual projection slides
 - Lyrics pagination preview and dark-theme lyric rendering
-- Windows and macOS/Linux startup scripts
+- Windows portable launcher with embedded Python
+- Traditional/Simplified Chinese conversion for single-language Chinese lyrics
+- Optional extended single-language pagination up to 6 lines per slide
 - English and Chinese project documentation
 
 ### Notes

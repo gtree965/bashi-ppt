@@ -28,6 +28,25 @@ _REPEAT_MARKER = re.compile(
     re.IGNORECASE,
 )
 
+# Inline chorus/refrain back-references like [Refrain], [Chorus], [副歌] — strip entirely
+_INLINE_REFRAIN = re.compile(r'\[(?:refrain|chorus|副歌)\]', re.IGNORECASE)
+
+# Standalone refrain references like "Refrain" / "Chorus" / "副歌"
+_STANDALONE_REFRAIN = re.compile(r'^(?:refrain|chorus|副歌)\s*[:：]?\s*$', re.IGNORECASE)
+
+# Leading verse numbers like "1 ", "2 ", "１ ", "1. ", "2) "
+_VERSE_NUMBER = re.compile(r'^[\d１２３４５６７８９０]+(?:[.)．、]\s*|\s+)')
+
+# Invisible characters frequently copied from hymn / lyrics sites.
+_INVISIBLE_CHARS = re.compile(r'[\u00ad\u200b\u200c\u200d\u2060\ufeff]')
+
+# Punctuation to strip from lyrics for clean slide display.
+# Covers Western and CJK punctuation. Preserves apostrophes (e.g. "don't", "I'm").
+_PUNCTUATION = re.compile(
+    r'[，。！？；：、""''""\"…\-—~～·«»《》〈〉（）\(\)\[\]【】{}'
+    r',\.!?;:\u2026\u2014\u2013]'
+)
+
 
 def _semantic_line_count(raw_line_count: int, is_bilingual: bool) -> int:
     """Return display-line count, treating an incomplete bilingual pair as one line."""
@@ -47,6 +66,29 @@ def _extract_repeat_count(text: str) -> tuple[str, int]:
     return cleaned, count
 
 
+def _clean_raw_line(text: str) -> str:
+    """Remove copy-paste artifacts before structural parsing."""
+    text = _INVISIBLE_CHARS.sub('', text)
+    text = text.replace('\xa0', ' ')
+    return text.strip()
+
+
+def _normalize_lyric_text(text: str) -> str:
+    """Normalize a lyric line for storage, comparison, and rendering."""
+    text = _clean_raw_line(text)
+    text = _INLINE_REFRAIN.sub('', text)
+    text = _VERSE_NUMBER.sub('', text)
+    text = _PUNCTUATION.sub('', text)
+    return " ".join(text.split()).strip()
+
+
+def _normalized_title_key(text: str) -> str:
+    """Lightweight normalizer for title-line deduplication."""
+    text = _clean_raw_line(text).casefold()
+    text = _PUNCTUATION.sub('', text)
+    return " ".join(text.split())
+
+
 def parse_lyrics(raw_text: str, title: str = "") -> LyricDocument:
     """
     Parse raw lyrics text into a LyricDocument.
@@ -62,14 +104,29 @@ def parse_lyrics(raw_text: str, title: str = "") -> LyricDocument:
     current_lines: list[str] = []
     pending_type: str = "verse"
     pending_repeat: int = 1
+    last_chorus_lines: list[str] = []
+    chorus_marker_pending = False
+
+    def append_chorus_reference():
+        """Repeat the most recent explicit chorus when a site uses 'Refrain' shorthand."""
+        if not last_chorus_lines:
+            return
+        sections.append(LyricSection(
+            section_type="chorus",
+            lines=[
+                LyricLine(text=line, is_chorus=True, script=classify_line(line))
+                for line in last_chorus_lines
+            ],
+            repeat_count=1,
+        ))
 
     def flush_section():
-        nonlocal current_lines, pending_type, pending_repeat
+        nonlocal current_lines, pending_type, pending_repeat, last_chorus_lines, chorus_marker_pending
         if not current_lines:
             return
         lyric_lines = []
         for raw_line in current_lines:
-            text = raw_line.strip()
+            text = _normalize_lyric_text(raw_line)
             if text:
                 script = classify_line(text)
                 is_chorus = pending_type == "chorus"
@@ -80,27 +137,77 @@ def parse_lyrics(raw_text: str, title: str = "") -> LyricDocument:
                 lines=lyric_lines,
                 repeat_count=pending_repeat,
             ))
+            if pending_type == "chorus":
+                last_chorus_lines = [line.text for line in lyric_lines]
         current_lines = []
         pending_type = "verse"
         pending_repeat = 1
+        chorus_marker_pending = False
+
+    first_non_empty_index = next((i for i, line in enumerate(lines) if _clean_raw_line(line)), None)
+    if title and first_non_empty_index is not None:
+        first_line = _clean_raw_line(lines[first_non_empty_index])
+        later_non_empty = [
+            _clean_raw_line(line)
+            for line in lines[first_non_empty_index + 1:]
+            if _clean_raw_line(line)
+        ]
+        if (
+            _normalized_title_key(first_line) == _normalized_title_key(title)
+            and later_non_empty
+            and _VERSE_NUMBER.match(later_non_empty[0])
+        ):
+            lines = lines[:first_non_empty_index] + lines[first_non_empty_index + 1:]
 
     for raw_line in lines:
-        stripped = raw_line.strip()
+        stripped = _clean_raw_line(raw_line)
 
         # Blank line — flush current section
         if not stripped:
+            if chorus_marker_pending and not current_lines:
+                # Ignore blank separators after a chorus marker. We decide whether
+                # it means "chorus incoming" or "repeat previous chorus" once the
+                # next real lyric line arrives.
+                continue
             flush_section()
             continue
 
+        if chorus_marker_pending and not current_lines and last_chorus_lines:
+            cleaned_line = _normalize_lyric_text(stripped)
+            first_chorus_line = last_chorus_lines[0] if last_chorus_lines else ""
+            if cleaned_line != first_chorus_line:
+                append_chorus_reference()
+                pending_type = "verse"
+                chorus_marker_pending = False
+
+        # Some hymn sites place the next verse immediately after the chorus
+        # without a blank line, e.g. "...look and live." then "2 I've...".
+        if pending_type == "chorus" and current_lines and _VERSE_NUMBER.match(stripped):
+            flush_section()
+
         # Check for section marker lines
-        if _CHORUS_MARKERS.match(stripped):
+        if _STANDALONE_REFRAIN.match(stripped):
             flush_section()
             pending_type = "chorus"
+            chorus_marker_pending = True
             continue
 
         if _BRIDGE_MARKERS.match(stripped):
             flush_section()
             pending_type = "bridge"
+            continue
+
+        chorus_marker_pending = False
+
+        # Inline [Refrain]/[Chorus] back-reference at end of a verse line.
+        # Flush the lyric line into the current section, then append the most
+        # recent chorus as a separate section.
+        if _INLINE_REFRAIN.search(stripped):
+            lyric_part = _INLINE_REFRAIN.sub('', stripped).strip()
+            if lyric_part:
+                current_lines.append(lyric_part)
+            flush_section()
+            append_chorus_reference()
             continue
 
         # Check for repeat markers within the line
@@ -113,6 +220,8 @@ def parse_lyrics(raw_text: str, title: str = "") -> LyricDocument:
             current_lines.append(stripped)
 
     # Flush remaining
+    if chorus_marker_pending and not current_lines:
+        append_chorus_reference()
     flush_section()
 
     return LyricDocument(title=title, sections=sections)

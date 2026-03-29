@@ -23,9 +23,11 @@ from schema import (
     LYRICS_LANGUAGE_OPTIONS,
     LYRICS_THEMES_META,
     LYRICS_MODE_LIMITS,
+    LYRICS_CHINESE_SCRIPT_OPTIONS,
     error_response,
     format_validation_errors,
 )
+from lyrics.chinese_script import ChineseScriptConversionUnavailableError, convert_text
 from llm.client import (
     LLMReasoningOnlyError,
     LLMTimeoutError,
@@ -83,6 +85,25 @@ def _split_bilingual_pairs_by_slide(slides: list[dict], all_pairs: list[tuple[st
             grouped_pairs.append(all_pairs[pair_idx:])
 
     return grouped_pairs
+
+
+def _apply_chinese_script_conversion(payload: LyricsRequest) -> tuple[str, str, str | None]:
+    """Apply optional Traditional/Simplified conversion to title and lyrics."""
+    mode = payload.chinese_script_mode
+    if (
+        mode == "original"
+        or payload.language_mode != "single"
+        or payload.language_config.primary != "zh"
+    ):
+        return payload.title, payload.lyrics, None
+
+    converted_title = convert_text(payload.title, mode)
+    converted_lyrics = convert_text(payload.lyrics, mode)
+    if mode == "to_simplified":
+        warning = "已按设定将中文原文转换为简体后再进行预览和导出。"
+    else:
+        warning = "已按设定将中文原文转换为繁體後再进行预览和导出。"
+    return converted_title, converted_lyrics, warning
 
 
 # =====================================================================
@@ -269,6 +290,7 @@ def lyrics_config():
         "languages": LYRICS_LANGUAGE_OPTIONS,
         "themes": LYRICS_THEMES_META,
         "limits": LYRICS_MODE_LIMITS,
+        "chinese_script_options": LYRICS_CHINESE_SCRIPT_OPTIONS,
     })
 
 
@@ -291,8 +313,20 @@ def preview_lyrics():
     is_bilingual = payload.language_mode == "bilingual"
     warnings = []
 
+    try:
+        title_text, lyrics_text, conversion_warning = _apply_chinese_script_conversion(payload)
+    except ChineseScriptConversionUnavailableError:
+        return error_response(
+            "当前安装缺少繁简转换组件，请重新安装依赖后再使用此功能。",
+            "Chinese script conversion is unavailable because this installation is missing the required dependency.",
+            503,
+        )
+
+    if conversion_warning:
+        warnings.append(conversion_warning)
+
     # Parse lyrics
-    doc = parse_lyrics(payload.lyrics, title=payload.title)
+    doc = parse_lyrics(lyrics_text, title=title_text)
 
     # Detect bilingual structure
     all_lines = [line.text for section in doc.sections for line in section.lines]
@@ -317,7 +351,7 @@ def preview_lyrics():
     slide_pair_groups = _split_bilingual_pairs_by_slide(slides, all_pairs) if is_bilingual and all_pairs is not None else []
 
     if payload.add_title_slide:
-        preview_slides.append({"page": page, "type": "title", "lines": [payload.title]})
+        preview_slides.append({"page": page, "type": "title", "lines": [title_text]})
         page += 1
 
     for slide_index, slide_data in enumerate(slides):
@@ -346,6 +380,7 @@ def preview_lyrics():
 
     if payload.add_amen_slide:
         amen_text = "阿们" if payload.language_config.primary == "zh" else "Amen"
+        amen_text = convert_text(amen_text, payload.chinese_script_mode)
         preview_slides.append({"page": page, "type": "amen", "lines": [amen_text]})
         page += 1
 
@@ -385,7 +420,8 @@ def generate_lyrics_pptx():
 
     try:
         is_bilingual = payload.language_mode == "bilingual"
-        doc = parse_lyrics(payload.lyrics, title=payload.title)
+        title_text, lyrics_text, _ = _apply_chinese_script_conversion(payload)
+        doc = parse_lyrics(lyrics_text, title=title_text)
         slides = split_into_slides(doc, payload.lines_per_slide, is_bilingual)
 
         bilingual_pairs = None
@@ -399,10 +435,11 @@ def generate_lyrics_pptx():
         lang_cfg = {
             "primary": payload.language_config.primary,
             "secondary": payload.language_config.secondary,
+            "script_conversion": payload.chinese_script_mode,
         }
         pptx_bytes = renderer.render(
             slides_data=slides,
-            title=payload.title,
+            title=title_text,
             theme=payload.theme,
             language_mode=payload.language_mode,
             language_config=lang_cfg,
@@ -413,13 +450,19 @@ def generate_lyrics_pptx():
 
         buffer = BytesIO(pptx_bytes)
         buffer.seek(0)
-        filename = f"{payload.title}.pptx"
+        filename = f"{title_text}.pptx"
 
         return send_file(
             buffer,
             as_attachment=True,
             download_name=filename,
             mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        )
+    except ChineseScriptConversionUnavailableError:
+        return error_response(
+            "当前安装缺少繁简转换组件，请重新安装依赖后再使用此功能。",
+            "Chinese script conversion is unavailable because this installation is missing the required dependency.",
+            503,
         )
     except Exception as exc:
         logger.exception("Error generating lyrics PPTX: %s", exc)

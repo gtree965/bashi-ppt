@@ -5,8 +5,11 @@ __pycache__/
 venv/
 .venv/
 node_modules/
-frontend/dist/
+# frontend/dist/ is tracked — shipped pre-built so users don't need npm
+python-3.12.10-embed-amd64/
+launch_log.txt
 slideforge.log
+.tmp-pip/
 *.egg-info/
 .DS_Store
 /*.pptx

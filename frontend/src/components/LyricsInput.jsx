@@ -23,34 +23,47 @@ const DEFAULT_THEMES = [
 
 const DEFAULT_LIMITS = {
   single: { min_lines: 2, max_lines: 4, default_lines: 4 },
+  single_extended: { min_lines: 2, max_lines: 6, default_lines: 4 },
   bilingual: { min_lines: 2, max_lines: 3, default_lines: 2 },
 };
+
+const DEFAULT_CHINESE_SCRIPT_OPTIONS = [
+  { id: 'original', name: '原文', name_en: 'Original' },
+  { id: 'to_simplified', name: '转为简体', name_en: 'To Simplified' },
+  { id: 'to_traditional', name: '转为繁體', name_en: 'To Traditional' },
+];
 
 export default function LyricsInput({ onPreview, onGenerate, isLoading, config }) {
   const languages = config?.languages || DEFAULT_LANGUAGES;
   const themes = config?.themes || DEFAULT_THEMES;
   const limits = config?.limits || DEFAULT_LIMITS;
+  const chineseScriptOptions = config?.chinese_script_options || DEFAULT_CHINESE_SCRIPT_OPTIONS;
 
   const [lyrics, setLyrics] = useState('');
   const [title, setTitle] = useState('');
   const [languageMode, setLanguageMode] = useState('single');
   const [primaryLang, setPrimaryLang] = useState('zh');
   const [secondaryLang, setSecondaryLang] = useState('en');
+  const [chineseScriptMode, setChineseScriptMode] = useState('original');
+  const [extendedSingleLines, setExtendedSingleLines] = useState(false);
   const [linesPerSlide, setLinesPerSlide] = useState(4);
   const [theme, setTheme] = useState('classic_dark');
   const [addTitleSlide, setAddTitleSlide] = useState(true);
-  const [addAmenSlide, setAddAmenSlide] = useState(true);
+  const [addAmenSlide, setAddAmenSlide] = useState(false);
+
+  const currentLimits = languageMode === 'single' && extendedSingleLines
+    ? (limits.single_extended || limits.single)
+    : limits[languageMode];
 
   // Adjust linesPerSlide when mode changes
   useEffect(() => {
-    const modeLimits = limits[languageMode];
-    if (linesPerSlide > modeLimits.max_lines) {
-      setLinesPerSlide(modeLimits.default_lines);
+    if (linesPerSlide > currentLimits.max_lines) {
+      setLinesPerSlide(currentLimits.default_lines);
     }
-    if (linesPerSlide < modeLimits.min_lines) {
-      setLinesPerSlide(modeLimits.default_lines);
+    if (linesPerSlide < currentLimits.min_lines) {
+      setLinesPerSlide(currentLimits.default_lines);
     }
-  }, [languageMode, limits]);
+  }, [currentLimits, linesPerSlide]);
 
   useEffect(() => {
     if (languageMode !== 'bilingual' || secondaryLang !== primaryLang) {
@@ -63,12 +76,26 @@ export default function LyricsInput({ onPreview, onGenerate, isLoading, config }
     }
   }, [languageMode, primaryLang, secondaryLang, languages]);
 
+  useEffect(() => {
+    if (languageMode !== 'single' || primaryLang !== 'zh') {
+      setChineseScriptMode('original');
+    }
+  }, [languageMode, primaryLang]);
+
+  useEffect(() => {
+    if (languageMode !== 'single' && extendedSingleLines) {
+      setExtendedSingleLines(false);
+    }
+  }, [languageMode, extendedSingleLines]);
+
   const buildPayload = () => ({
     lyrics,
     title: title.trim(),
     lines_per_slide: linesPerSlide,
     theme,
     language_mode: languageMode,
+    chinese_script_mode: languageMode === 'single' && primaryLang === 'zh' ? chineseScriptMode : 'original',
+    extended_single_lines: languageMode === 'single' ? extendedSingleLines : false,
     language_config: {
       primary: primaryLang,
       secondary: languageMode === 'bilingual' ? secondaryLang : undefined,
@@ -93,7 +120,6 @@ export default function LyricsInput({ onPreview, onGenerate, isLoading, config }
     onGenerate(buildPayload());
   };
 
-  const currentLimits = limits[languageMode];
   const linesOptions = [];
   for (let i = currentLimits.min_lines; i <= currentLimits.max_lines; i++) {
     linesOptions.push(i);
@@ -229,6 +255,53 @@ export default function LyricsInput({ onPreview, onGenerate, isLoading, config }
             )}
           </div>
         </div>
+
+        {languageMode === 'single' && primaryLang === 'zh' && (
+          <div>
+            <label className="mb-3 block text-sm font-medium text-bashi-text">
+              中文转换 Chinese Script
+            </label>
+            <div className="flex flex-wrap gap-3">
+              {chineseScriptOptions.map((option) => (
+                <label
+                  key={option.id}
+                  className={`bashi-pill rounded-full px-4 py-2 ${chineseScriptMode === option.id ? 'active' : ''} ${isLoading ? 'pointer-events-none opacity-60' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="chineseScriptMode"
+                    value={option.id}
+                    checked={chineseScriptMode === option.id}
+                    onChange={() => setChineseScriptMode(option.id)}
+                    disabled={isLoading}
+                    className="sr-only"
+                  />
+                  {option.name}
+                </label>
+              ))}
+            </div>
+            <p className="mt-2 text-xs leading-5 text-bashi-text-muted">
+              简繁转换会应用于“预览分页”和“生成歌词 PPT”
+            </p>
+          </div>
+        )}
+
+        {languageMode === 'single' && (
+          <div>
+            <label className="flex cursor-pointer items-start gap-3 text-sm text-bashi-text-secondary">
+              <input
+                type="checkbox"
+                checked={extendedSingleLines}
+                onChange={(e) => setExtendedSingleLines(e.target.checked)}
+                disabled={isLoading}
+                className="mt-0.5 accent-bashi-copper"
+              />
+              <span>
+                允许更多行数（单语最多 6 行，适合大屏或短句歌词）
+              </span>
+            </label>
+          </div>
+        )}
 
         {/* Lines per slide */}
         <div>
