@@ -16,7 +16,7 @@ def test_generate_pptx():
             "slides": [
                 {
                     "page_number": 1,
-                    "title": "欢迎使用 SlideForge",
+                    "title": "欢迎使用巴适PPT",
                     "content_points": ["本地AI驱动的演示文稿生成器", "零外部依赖，保护隐私"],
                     "slide_type": "title"
                 },

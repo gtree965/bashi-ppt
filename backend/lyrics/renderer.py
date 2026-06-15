@@ -103,6 +103,9 @@ class LyricsPPTXRenderer:
         add_title_slide: bool = True,
         add_amen_slide: bool = True,
         bilingual_pairs: list[list[tuple[str, str]]] | None = None,
+        font_family: str | None = None,
+        font_size_adjustment: int = 0,
+        line_spacing: float = 1.5,
     ) -> bytes:
         """
         Render lyrics slides to PPTX bytes.
@@ -126,21 +129,21 @@ class LyricsPPTXRenderer:
         prs.slide_height = SLIDE_HEIGHT
 
         if add_title_slide:
-            self._render_title_slide(prs, title, theme_cfg, lang_cfg)
+            self._render_title_slide(prs, title, theme_cfg, lang_cfg, font_family, font_size_adjustment)
 
         if language_mode == "bilingual" and bilingual_pairs:
             for i, slide_data in enumerate(slides_data):
                 pairs = bilingual_pairs[i] if i < len(bilingual_pairs) else []
-                self._render_bilingual_slide(prs, pairs, theme_cfg, slide_data.get("is_chorus", False), lang_cfg)
+                self._render_bilingual_slide(prs, pairs, theme_cfg, slide_data.get("is_chorus", False), lang_cfg, font_family, font_size_adjustment, line_spacing)
         else:
             for slide_data in slides_data:
                 self._render_lyrics_slide(
                     prs, slide_data["lines"], theme_cfg,
-                    slide_data.get("is_chorus", False), lang_cfg,
+                    slide_data.get("is_chorus", False), lang_cfg, font_family, font_size_adjustment, line_spacing
                 )
 
         if add_amen_slide:
-            self._render_amen_slide(prs, theme_cfg, lang_cfg)
+            self._render_amen_slide(prs, theme_cfg, lang_cfg, font_family, font_size_adjustment)
 
         buffer = BytesIO()
         prs.save(buffer)
@@ -156,7 +159,7 @@ class LyricsPPTXRenderer:
         fill.fore_color.rgb = hex_to_rgb(theme_cfg["background"])
         return slide
 
-    def _render_title_slide(self, prs, title: str, theme_cfg: dict, lang_cfg: dict):
+    def _render_title_slide(self, prs, title: str, theme_cfg: dict, lang_cfg: dict, font_family: str | None = None, font_size_adjustment: int = 0):
         """Title slide: song name centered large."""
         from pptx.util import Inches
 
@@ -175,13 +178,13 @@ class LyricsPPTXRenderer:
         run.text = title
 
         primary_script = _get_script_for_lang(lang_cfg.get("primary", "zh"))
-        font_name = LANGUAGE_FONTS.get(primary_script, "Arial")
-        set_font(run, font_name=font_name, size_pt=_TITLE_SIZE, bold=True,
+        font_name = font_family or LANGUAGE_FONTS.get(primary_script, "Arial")
+        set_font(run, font_name=font_name, size_pt=_TITLE_SIZE + font_size_adjustment, bold=True,
                  color=hex_to_rgb(theme_cfg["text_color"]), script=primary_script)
 
     def _render_lyrics_slide(
         self, prs, lines: list[str], theme_cfg: dict,
-        is_chorus: bool, lang_cfg: dict,
+        is_chorus: bool, lang_cfg: dict, font_family: str | None = None, font_size_adjustment: int = 0, line_spacing: float = 1.5
     ):
         """Single-language lyrics slide: centered large text."""
         from pptx.util import Inches
@@ -196,15 +199,15 @@ class LyricsPPTXRenderer:
         _set_vertical_center(tf)
 
         primary_script = _get_script_for_lang(lang_cfg.get("primary", "zh"))
-        font_name = LANGUAGE_FONTS.get(primary_script, "Arial")
-        font_size = LANGUAGE_FONT_SIZES["single"].get(primary_script, 38)
+        font_name = font_family or LANGUAGE_FONTS.get(primary_script, "Arial")
+        font_size = LANGUAGE_FONT_SIZES["single"].get(primary_script, 38) + font_size_adjustment
         text_color = theme_cfg["chorus_color"] if is_chorus else theme_cfg["text_color"]
 
         for i, line_text in enumerate(lines):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.alignment = PP_ALIGN.CENTER
             p.space_after = Pt(4)
-            p.line_spacing = 1.5
+            p.line_spacing = line_spacing
             run = p.add_run()
             run.text = line_text
             set_font(run, font_name=font_name, size_pt=font_size, bold=True,
@@ -212,7 +215,7 @@ class LyricsPPTXRenderer:
 
     def _render_bilingual_slide(
         self, prs, pairs: list[tuple[str, str]], theme_cfg: dict,
-        is_chorus: bool, lang_cfg: dict,
+        is_chorus: bool, lang_cfg: dict, font_family: str | None = None, font_size_adjustment: int = 0, line_spacing: float = 1.5
     ):
         """Bilingual lyrics slide: primary (large) + secondary (smaller, gray) alternating."""
         from pptx.util import Inches
@@ -229,11 +232,11 @@ class LyricsPPTXRenderer:
         primary_script = _get_script_for_lang(lang_cfg.get("primary", "zh"))
         secondary_script = _get_script_for_lang(lang_cfg.get("secondary", "en"))
 
-        primary_font = LANGUAGE_FONTS.get(primary_script, "Arial")
-        secondary_font = LANGUAGE_FONTS.get(secondary_script, "Arial")
+        primary_font = font_family or LANGUAGE_FONTS.get(primary_script, "Arial")
+        secondary_font = font_family or LANGUAGE_FONTS.get(secondary_script, "Arial")
 
-        primary_size = LANGUAGE_FONT_SIZES["bilingual_primary"].get(primary_script, 34)
-        secondary_size = LANGUAGE_FONT_SIZES["bilingual_secondary"].get(secondary_script, 26)
+        primary_size = LANGUAGE_FONT_SIZES["bilingual_primary"].get(primary_script, 34) + font_size_adjustment
+        secondary_size = LANGUAGE_FONT_SIZES["bilingual_secondary"].get(secondary_script, 26) + font_size_adjustment
 
         primary_color = theme_cfg["chorus_color"] if is_chorus else theme_cfg["text_color"]
         secondary_color = theme_cfg["secondary_text_color"]
@@ -245,7 +248,7 @@ class LyricsPPTXRenderer:
             first_para = False
             p.alignment = PP_ALIGN.CENTER
             p.space_after = Pt(0)
-            p.line_spacing = 1.3
+            p.line_spacing = line_spacing
             run = p.add_run()
             run.text = primary_text
             set_font(run, font_name=primary_font, size_pt=primary_size, bold=True,
@@ -256,13 +259,13 @@ class LyricsPPTXRenderer:
                 p2 = tf.add_paragraph()
                 p2.alignment = PP_ALIGN.CENTER
                 p2.space_after = Pt(8)
-                p2.line_spacing = 1.3
+                p2.line_spacing = line_spacing
                 run2 = p2.add_run()
                 run2.text = secondary_text
                 set_font(run2, font_name=secondary_font, size_pt=secondary_size, bold=False,
                          color=hex_to_rgb(secondary_color), script=secondary_script)
 
-    def _render_amen_slide(self, prs, theme_cfg: dict, lang_cfg: dict):
+    def _render_amen_slide(self, prs, theme_cfg: dict, lang_cfg: dict, font_family: str | None = None, font_size_adjustment: int = 0):
         """Amen slide: large centered text."""
         from pptx.util import Inches
 
@@ -286,6 +289,6 @@ class LyricsPPTXRenderer:
         else:
             run.text = "Amen"
 
-        font_name = LANGUAGE_FONTS.get(primary_script, "Arial")
-        set_font(run, font_name=font_name, size_pt=_AMEN_SIZE, bold=True,
+        font_name = font_family or LANGUAGE_FONTS.get(primary_script, "Arial")
+        set_font(run, font_name=font_name, size_pt=_AMEN_SIZE + font_size_adjustment, bold=True,
                  color=hex_to_rgb(theme_cfg["text_color"]), script=primary_script)

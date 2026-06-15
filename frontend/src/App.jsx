@@ -5,6 +5,7 @@ import OutlineEditor from './components/OutlineEditor';
 import TemplateSelector from './components/TemplateSelector';
 import GenerateButton from './components/GenerateButton';
 import HymnStudio from './components/HymnStudio';
+import LLMSettings from './components/LLMSettings';
 import { generateOutline, generatePptx } from './api/client';
 
 const STEPS = {
@@ -17,8 +18,15 @@ const STEPS = {
 const TEMPLATE_BY_SCENARIO = {
   teaching: 'teaching',
   church: 'church',
-  parents: 'teaching',
-  general: 'teaching',
+  parents: 'professional',
+  general: 'default',
+};
+
+const THEME_BY_TEMPLATE = {
+  teaching: 'clean_blue',
+  church: 'church_grace',
+  professional: 'warm_earth',
+  default: 'clean_blue',
 };
 
 const MODES = {
@@ -34,11 +42,15 @@ function App() {
   const [scenario, setScenario] = useState('teaching');
   const [error, setError] = useState(null);
   const [warnings, setWarnings] = useState([]);
+  const [showSettings, setShowSettings] = useState(false);
+  const [bulletStyle, setBulletStyle] = useState('dot');
+  const [selectedTheme, setSelectedTheme] = useState('clean_blue');
 
   const handleTopicSubmit = async ({ topic, numSlides, scenario, language, referenceText }) => {
     const autoTemplate = TEMPLATE_BY_SCENARIO[scenario] || 'teaching';
     setScenario(scenario);
     setTemplate(autoTemplate);
+    setSelectedTheme(THEME_BY_TEMPLATE[autoTemplate] || 'clean_blue');
     setStep(STEPS.GENERATING_OUTLINE);
     setError(null);
     setWarnings([]);
@@ -63,7 +75,7 @@ function App() {
     setStep(STEPS.GENERATING_PPTX);
     setError(null);
     try {
-      await generatePptx(outline, template);
+      await generatePptx(outline, template, bulletStyle, selectedTheme);
       setStep(STEPS.EDITING);
     } catch (err) {
       setError(err.message);
@@ -78,6 +90,8 @@ function App() {
     setWarnings([]);
     setScenario('teaching');
     setTemplate('teaching');
+    setBulletStyle('dot');
+    setSelectedTheme('clean_blue');
   };
 
   return (
@@ -91,6 +105,18 @@ function App() {
       <div className="relative min-h-screen px-4 py-8 md:px-6 md:py-10">
         <div className="mx-auto max-w-5xl">
           <Header />
+
+          {/* Settings gear button */}
+          <div className="absolute right-4 top-4 md:right-6 md:top-6">
+            <button
+              type="button"
+              onClick={() => setShowSettings(true)}
+              title="AI 模型设置"
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-bashi-border bg-black/20 text-bashi-text-muted transition hover:border-bashi-copper hover:text-bashi-copper"
+            >
+              ⚙️
+            </button>
+          </div>
 
           {/* Mode switcher */}
           <div className="mt-6 flex justify-center">
@@ -161,7 +187,14 @@ function App() {
 
                 {(step === STEPS.EDITING || step === STEPS.GENERATING_PPTX) && (
                   <>
-                    <TemplateSelector scenario={scenario} selected={template} />
+                    <TemplateSelector
+                      scenario={scenario}
+                      selected={template}
+                      bulletStyle={bulletStyle}
+                      onBulletStyleChange={setBulletStyle}
+                      selectedTheme={selectedTheme}
+                      onThemeChange={setSelectedTheme}
+                    />
                     <OutlineEditor outline={outline} onOutlineChange={setOutline} />
                     <GenerateButton
                       onGenerate={handleGeneratePptx}
@@ -182,6 +215,33 @@ function App() {
           </footer>
         </div>
       </div>
+
+      {/* Settings slide-out overlay */}
+      {showSettings && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowSettings(false)}
+          />
+          {/* Panel */}
+          <div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col overflow-y-auto bg-[#1a1a2e] shadow-2xl">
+            <div className="flex items-center justify-between border-b border-bashi-border px-6 py-4">
+              <span className="font-semibold text-bashi-text">⚙️ AI 模型设置</span>
+              <button
+                type="button"
+                onClick={() => setShowSettings(false)}
+                className="text-2xl leading-none text-bashi-text-muted hover:text-bashi-text"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              <LLMSettings onClose={() => setShowSettings(false)} />
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 }

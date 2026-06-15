@@ -23,7 +23,7 @@ def _get_converter(config_name: str):
         from opencc import OpenCC
     except ImportError as exc:  # pragma: no cover - depends on local install
         raise ChineseScriptConversionUnavailableError(
-            "OpenCC is not installed for this SlideForge environment."
+            "OpenCC is not installed for this Bashi PPT environment."
         ) from exc
     return OpenCC(config_name)
 

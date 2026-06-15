@@ -1,5 +1,5 @@
 """
-LLM Client — OpenAI-compatible interface for LM Studio / cloud APIs.
+LLM Client — OpenAI-compatible interface for LM Studio / Ollama / cloud APIs.
 """
 
 from __future__ import annotations
@@ -8,16 +8,10 @@ import logging
 import time
 from dataclasses import dataclass
 
+import httpx
 from openai import APIConnectionError, APIError, APITimeoutError, BadRequestError, OpenAI
 
-from config import (
-    LLM_API_KEY,
-    LLM_BASE_URL,
-    LLM_MAX_TOKENS,
-    LLM_MODEL,
-    LLM_TEMPERATURE,
-    LLM_TIMEOUT,
-)
+import config  # import the module, not its names, so hot-reload works
 from .prompts import build_messages
 
 logger = logging.getLogger("slideforge")
@@ -51,11 +45,25 @@ class LLMGenerationResult:
 
 
 def _build_client() -> OpenAI:
+    """Build an OpenAI client using the *current* config values.
+
+    Reading from the config module object (not cached names) means that
+    after a POST /api/settings/llm + config.reload(), the very next call
+    to _build_client() will use the new provider/key/URL without a restart.
+    """
+    base_url = config.LLM_BASE_URL
+    if config.LLM_PROVIDER in ("lmstudio", "ollama") and base_url:
+        clean_url = base_url.strip().rstrip("/")
+        if not clean_url.endswith("/v1"):
+            base_url = clean_url + "/v1"
+
     return OpenAI(
-        base_url=LLM_BASE_URL,
-        api_key=LLM_API_KEY,
-        timeout=LLM_TIMEOUT,
+        base_url=base_url,
+        api_key=config.LLM_API_KEY or "local",
+        timeout=config.LLM_TIMEOUT,
+        http_client=httpx.Client(verify=config.VERIFY_SSL),
     )
+
 
 
 def _json_mode_not_supported(exc: BadRequestError) -> bool:
@@ -129,7 +137,7 @@ def check_llm_health() -> tuple[bool, str | None]:
         if not model_data:
             return False, None
         model_id = getattr(model_data[0], "id", None)
-        return True, model_id or LLM_MODEL
+        return True, model_id or config.LLM_MODEL
     except Exception as exc:
         logger.warning("LLM health check failed: %s", exc)
         return False, None
@@ -159,17 +167,17 @@ def generate_outline_text(
         started_at = time.perf_counter()
         try:
             request_kwargs = {
-                "model": LLM_MODEL,
+                "model": config.LLM_MODEL,
                 "messages": messages,
-                "temperature": LLM_TEMPERATURE,
-                "max_tokens": LLM_MAX_TOKENS,
+                "temperature": config.LLM_TEMPERATURE,
+                "max_tokens": config.LLM_MAX_TOKENS,
             }
             if use_json_mode:
                 request_kwargs["response_format"] = {"type": "json_object"}
 
             logger.info(
                 "Calling LLM endpoint: model=%s, slides=%s, scenario=%s, language=%s, attempt=%s",
-                LLM_MODEL,
+                config.LLM_MODEL,
                 num_slides,
                 scenario,
                 language,
@@ -183,7 +191,7 @@ def generate_outline_text(
             raw_text = (getattr(message, "content", None) or "").strip()
             reasoning_text = (getattr(message, "reasoning_content", None) or "").strip()
             finish_reason = getattr(choice, "finish_reason", None)
-            resolved_model = getattr(response, "model", None) or LLM_MODEL
+            resolved_model = getattr(response, "model", None) or config.LLM_MODEL
 
             if not raw_text:
                 if reasoning_text:
@@ -255,3 +263,50 @@ def generate_outline_text(
             raise OutlineGenerationError(f"Unexpected LLM error: {exc}") from exc
 
     raise OutlineGenerationError(f"LLM request failed after retries: {last_error}")
+
+
+def translate_to_english(text: str) -> str:
+    """Translate a given query/text to English using the configured LLM.
+    If the text is already in English, or translation fails/timeouts, returns the original text.
+    """
+    if not text:
+        return text
+
+    # Quick check: if all characters are ASCII, it's likely already in English/ASCII.
+    try:
+        text.encode('ascii')
+        return text
+    except UnicodeEncodeError:
+        pass
+
+    try:
+        client = _build_client()
+        prompt = (
+            "You are a translation assistant. Translate the following Chinese/non-English query to a concise, search-friendly English keyword or short phrase (suitable for searching pictures on Pixabay, e.g. 'church', 'artificial intelligence', 'happy family').\n"
+            "Return ONLY the translated English text. Do not include quotes, explanation, or punctuation.\n"
+            f"Query: {text}\n"
+            "English translation:"
+        )
+
+        response = client.chat.completions.create(
+            model=config.LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=20,
+            timeout=5, # Fast timeout for UI responsiveness
+        )
+
+        choice = response.choices[0] if response.choices else None
+        message = getattr(choice, "message", None)
+        translated = (getattr(message, "content", None) or "").strip()
+        # Clean quotes
+        translated = translated.replace('"', '').replace("'", "")
+
+        if translated:
+            logger.info("Translated search query from '%s' to '%s'", text, translated)
+            return translated
+    except Exception as e:
+        logger.warning("Failed to translate query '%s' to English: %s", text, e)
+
+    return text
+

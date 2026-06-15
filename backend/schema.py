@@ -1,5 +1,5 @@
 """
-SlideForge schema — THE single source of truth.
+Bashi PPT (巴适PPT) schema — THE single source of truth.
 
 Imported by: prompts.py, outline_parser.py, frontend OutlineEditor, renderer engine.
 """
@@ -57,6 +57,7 @@ class SlideData(BaseModel):
     title: str = Field(min_length=1, max_length=30)
     content_points: List[str] = Field(min_length=1, max_length=5)
     slide_type: Literal["title", "content", "conclusion"]
+    image_url: Optional[str] = Field(default=None, description="Optional image URL for the slide")
 
     @field_validator("content_points")
     @classmethod
@@ -127,7 +128,7 @@ class OutlineData(BaseModel):
 class OutlineRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    topic: str = Field(min_length=1, max_length=200)
+    topic: str = Field(min_length=0, max_length=200, default="")
     reference_text: str | None = Field(default=None, max_length=6000)
     num_slides: int = Field(
         default=8,
@@ -144,6 +145,12 @@ class OutlineRequest(BaseModel):
             return None
         text = value.strip()
         return text or None
+
+    @model_validator(mode="after")
+    def validate_content_provided(self):
+        if not self.topic.strip() and not self.reference_text:
+            raise ValueError("Must provide either a topic or reference text")
+        return self
 
 
 class GeneratePptxRequest(BaseModel):
@@ -230,6 +237,9 @@ class LyricsRequest(BaseModel):
     language_config: LanguageConfig
     add_title_slide: bool = True
     add_amen_slide: bool = False
+    font_family: Optional[str] = None
+    font_size_adjustment: int = Field(default=0, ge=-10, le=10)
+    line_spacing: float = Field(default=1.5, ge=1.0, le=2.5)
 
     @model_validator(mode="after")
     def validate_language_consistency(self):
@@ -385,3 +395,38 @@ def validate_outline_request(data: dict) -> List[str]:
         zh_text, _ = format_validation_errors(exc)
         return zh_text.split("；")
     return []
+
+
+# =====================================================================
+# LLM Settings (used by POST /api/settings/llm)
+# =====================================================================
+
+OLLAMA_RECOMMENDED_MODELS = [
+    {"id": "gemma4:e2b", "label": "Gemma 4 E2B（快速，约 3.2GB）"},
+    {"id": "gemma4:e4b", "label": "Gemma 4 E4B（高质量，约 6.4GB）"},
+    {"id": "mistral",    "label": "Mistral 7B（通用）"},
+    {"id": "llama3.2",   "label": "Llama 3.2 3B（轻量）"},
+]
+
+OPENROUTER_RECOMMENDED_MODELS = [
+    {"id": "google/gemma-4-31b-it:free",      "label": "Gemma 4 31B（免费，高质量）"},
+    {"id": "meta-llama/llama-3.3-70b-instruct:free", "label": "Llama 3.3 70B（免费，高质量）"},
+    {"id": "qwen/qwen3-coder:free",           "label": "Qwen 3 Coder（免费，速度快）"},
+    {"id": "meta-llama/llama-3.2-3b-instruct:free", "label": "Llama 3.2 3B（免费，轻量）"},
+]
+
+
+class LLMSettingsRequest(BaseModel):
+    """Request body for POST /api/settings/llm."""
+
+    provider: Literal["lmstudio", "ollama", "openrouter"] = "lmstudio"
+    model: str = Field(default="", description="Model identifier for the chosen provider")
+    api_key: Optional[str] = Field(default=None, description="API key (OpenRouter only)")
+    base_url: Optional[str] = Field(default=None, description="Override base URL (advanced)")
+    pixabay_api_key: Optional[str] = Field(default=None, description="Pixabay API Key")
+
+    @model_validator(mode="after")
+    def validate_openrouter_key(self) -> "LLMSettingsRequest":
+        if self.provider == "openrouter" and not (self.api_key or "").strip():
+            raise ValueError("OpenRouter 需要 API Key / OpenRouter requires an API key")
+        return self

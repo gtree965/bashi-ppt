@@ -157,6 +157,21 @@ def _normalize_outline(outline: dict[str, Any]) -> ParsedOutlineResult:
         if not isinstance(raw_points, list):
             raw_points = []
 
+        # Repair: split any point containing newlines into separate items
+        split_points = []
+        has_split = False
+        for p in raw_points:
+            p_str = str(p)
+            if "\n" in p_str or "\r" in p_str:
+                parts = [part.strip() for part in re.split(r'\r?\n', p_str)]
+                split_points.extend([part for part in parts if part])
+                has_split = True
+            else:
+                split_points.append(p)
+        if has_split:
+            raw_points = split_points
+            warnings.append(f"Split newline-separated content_points on slide {index + 1}")
+
         normalized_points: list[str] = []
         for point in raw_points:
             text = str(point).strip()

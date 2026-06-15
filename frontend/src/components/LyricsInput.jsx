@@ -50,6 +50,9 @@ export default function LyricsInput({ onPreview, onGenerate, isLoading, config }
   const [theme, setTheme] = useState('classic_dark');
   const [addTitleSlide, setAddTitleSlide] = useState(true);
   const [addAmenSlide, setAddAmenSlide] = useState(false);
+  const [fontFamily, setFontFamily] = useState('');
+  const [fontSizeAdj, setFontSizeAdj] = useState(0);
+  const [lineSpacing, setLineSpacing] = useState(1.5);
 
   const currentLimits = languageMode === 'single' && extendedSingleLines
     ? (limits.single_extended || limits.single)
@@ -106,6 +109,9 @@ export default function LyricsInput({ onPreview, onGenerate, isLoading, config }
     },
     add_title_slide: addTitleSlide,
     add_amen_slide: addAmenSlide,
+    font_family: fontFamily || undefined,
+    font_size_adjustment: fontSizeAdj,
+    line_spacing: lineSpacing,
   });
 
   const handlePreview = (e) => {
@@ -328,6 +334,60 @@ export default function LyricsInput({ onPreview, onGenerate, isLoading, config }
             ))}
           </div>
           <p className="mt-2 text-xs text-bashi-text-muted">{linesLabel}</p>
+        </div>
+
+        {/* Typography Controls */}
+        <div>
+          <label className="mb-3 block text-sm font-medium text-bashi-text">
+            排版微调 Typography
+          </label>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div>
+              <span className="mb-1 block text-xs text-bashi-text-secondary">字体 Font</span>
+              <select
+                value={fontFamily}
+                onChange={(e) => setFontFamily(e.target.value)}
+                disabled={isLoading}
+                className="bashi-input w-full rounded-xl px-3 py-2 text-sm"
+              >
+                <option value="">默认 (Default)</option>
+                <option value="Microsoft YaHei">微软雅黑 (Microsoft YaHei)</option>
+                <option value="SimHei">黑体 (SimHei)</option>
+                <option value="KaiTi">楷体 (KaiTi)</option>
+                <option value="Arial">Arial</option>
+              </select>
+            </div>
+            <div>
+              <span className="mb-1 block text-xs text-bashi-text-secondary">
+                字号微调 Size: {fontSizeAdj > 0 ? `+${fontSizeAdj}` : fontSizeAdj}
+              </span>
+              <input
+                type="range"
+                min="-10"
+                max="10"
+                step="1"
+                value={fontSizeAdj}
+                onChange={(e) => setFontSizeAdj(parseInt(e.target.value, 10))}
+                disabled={isLoading}
+                className="w-full accent-bashi-copper"
+              />
+            </div>
+            <div>
+              <span className="mb-1 block text-xs text-bashi-text-secondary">
+                行距 Spacing: {lineSpacing.toFixed(1)}
+              </span>
+              <input
+                type="range"
+                min="1.0"
+                max="2.5"
+                step="0.1"
+                value={lineSpacing}
+                onChange={(e) => setLineSpacing(parseFloat(e.target.value))}
+                disabled={isLoading}
+                className="w-full accent-bashi-copper"
+              />
+            </div>
+          </div>
         </div>
 
         {/* Theme picker */}

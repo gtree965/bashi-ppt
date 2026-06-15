@@ -1,3 +1,6 @@
+import { useState } from 'react';
+import ImageSearchModal from './ImageSearchModal';
+
 const SLIDE_TYPE_STYLES = {
   title: 'border-[#d4a373] bg-[rgba(212,163,115,0.08)]',
   content: 'border-white/15 bg-white/5',
@@ -32,6 +35,10 @@ const SLIDE_CONSTRAINTS = {
 };
 
 export default function OutlineEditor({ outline, onOutlineChange }) {
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [activeSlideIndex, setActiveSlideIndex] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
   if (!outline) {
     return (
       <div className="bashi-card rounded-[28px] p-8 text-center text-bashi-text-muted">
@@ -85,6 +92,19 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
     updated.slides = outline.slides.filter((_, index) => index !== slideIndex);
     updated.slides = updated.slides.map((slide, index) => ({ ...slide, page_number: index + 1 }));
     onOutlineChange(updated);
+  };
+
+  const updateSlideImage = (slideIndex, imageUrl) => {
+    const updated = { ...outline };
+    updated.slides = [...updated.slides];
+    updated.slides[slideIndex] = { ...updated.slides[slideIndex], image_url: imageUrl || undefined };
+    onOutlineChange(updated);
+  };
+
+  const openSearch = (slideIndex, currentTitle) => {
+    setActiveSlideIndex(slideIndex);
+    setSearchQuery(currentTitle || '');
+    setIsSearchOpen(true);
   };
 
   const addSlide = () => {
@@ -196,6 +216,52 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
               >
                 + 添加要点
               </button>
+
+              {/* Optional Image for content slide */}
+              {slide.slide_type === 'content' && (
+                <div className="mt-4 border-t border-white/5 pt-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-bashi-text-secondary">配图 Image</span>
+                  </div>
+                  <div className="mt-2 flex items-center gap-4">
+                    {slide.image_url ? (
+                      <>
+                        <div className="relative h-16 w-28 overflow-hidden rounded-xl border border-white/10 bg-black/40">
+                          <img
+                            src={slide.image_url}
+                            alt="Selected slide graphic"
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openSearch(slideIndex, slide.title)}
+                            className="rounded-full border border-white/10 px-3.5 py-1.5 text-xs text-bashi-text-secondary transition hover:border-bashi-border-focus hover:text-bashi-text"
+                          >
+                            更换配图
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateSlideImage(slideIndex, null)}
+                            className="rounded-full border border-white/10 px-3.5 py-1.5 text-xs text-bashi-text-muted transition hover:border-red-300/40 hover:text-red-200"
+                          >
+                            删除配图
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => openSearch(slideIndex, slide.title)}
+                        className="flex items-center gap-1.5 rounded-full border border-dashed border-bashi-border px-4 py-2 text-xs text-bashi-text-secondary transition hover:border-bashi-border-focus hover:text-bashi-text"
+                      >
+                        🖼️ + 添加配图
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
@@ -209,6 +275,12 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
       >
         + 添加幻灯片
       </button>
+      <ImageSearchModal
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+        onSelectImage={(imageUrl) => updateSlideImage(activeSlideIndex, imageUrl)}
+        initialQuery={searchQuery}
+      />
     </section>
   );
 }

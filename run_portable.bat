@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal EnableExtensions EnableDelayedExpansion
 
 REM =========================================================
-REM SlideForge v0.1.0 - Windows Portable Launcher
+REM Bashi PPT (巴适PPT) v0.1.0 - Windows Portable Launcher
 REM Uses embedded Python — no system Python or npm required.
 REM =========================================================
 
@@ -18,10 +18,21 @@ set "PYTHON_EXE=%EMBED_DIR%\python.exe"
 
 echo.
 echo  ========================================
-echo   SlideForge v0.1.0 (Windows Portable)
+echo   巴适PPT v0.1.0 (Windows Portable)
 echo   Local AI PPT Generator
 echo  ========================================
 echo.
+
+REM 0. Ensure .env file exists
+if not exist "%~dp0.env" (
+    if exist "%~dp0.env.example" (
+        echo [SETUP] Creating .env from .env.example...
+        copy "%~dp0.env.example" "%~dp0.env" >nul
+        echo [SETUP] Created .env file from .env.example >> "%LOGFILE%"
+    ) else (
+        echo [WARNING] .env.example not found, skipping configuration setup >> "%LOGFILE%"
+    )
+)
 
 REM 1. Check embedded Python
 echo [CHECK] Looking for: %PYTHON_EXE% >> "%LOGFILE%"
@@ -105,7 +116,7 @@ if %errorlevel% neq 0 (
 
 REM 7. Start Flask
 echo.
-echo [START] Starting SlideForge server...
+echo [START] Starting Bashi PPT server...
 echo [URL]   Open browser: http://localhost:5100
 echo.
 echo Press Ctrl+C to stop the server.

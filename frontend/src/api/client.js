@@ -93,11 +93,16 @@ export async function generateLyricsPptx(payload) {
   URL.revokeObjectURL(url);
 }
 
-export async function generatePptx(outline, templateId) {
+export async function generatePptx(outline, templateId, bulletStyle = 'dot', themeId = null) {
   const res = await fetch(`${API_BASE}/generate-pptx`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ outline, template_id: templateId }),
+    body: JSON.stringify({
+      outline,
+      template_id: templateId,
+      bullet_style: bulletStyle,
+      theme_id: themeId,
+    }),
   });
 
   if (!res.ok) {
@@ -116,3 +121,44 @@ export async function generatePptx(outline, templateId) {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+// ─── LLM Settings ────────────────────────────────────────────────────────────
+
+export async function getLLMSettings() {
+  const res = await fetch(`${API_BASE}/settings/llm`);
+  return await parseJsonResponse(res);
+}
+
+export async function saveLLMSettings(payload) {
+  const res = await fetch(`${API_BASE}/settings/llm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return await parseJsonResponse(res);
+}
+
+export async function testLLMSettings(payload) {
+  const res = await fetch(`${API_BASE}/settings/test-llm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return await parseJsonResponse(res);
+}
+
+export async function getRecommendedModels() {
+  const res = await fetch(`${API_BASE}/settings/recommended-models`);
+  return await parseJsonResponse(res);
+}
+
+export async function getOpenRouterFreeModels() {
+  const res = await fetch(`${API_BASE}/settings/openrouter/free-models`);
+  return await parseJsonResponse(res);
+}
+
+export async function searchImages(query) {
+  const res = await fetch(`${API_BASE}/images/search?q=${encodeURIComponent(query)}`);
+  return await parseJsonResponse(res);
+}
+

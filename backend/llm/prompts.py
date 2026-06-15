@@ -37,7 +37,8 @@ def build_system_prompt() -> str:
         "严格要求：\n"
         "1. 只输出合法JSON，不要Markdown，不要解释。\n"
         "2. 顶层格式必须是 "
-        '{"title":"演示标题","slides":[{"page_number":1,"title":"页面标题","content_points":["要点"],"slide_type":"title"}]}。\n'
+        '{"title":"演示标题","slides":[{"page_number":1,"title":"页面标题","content_points":["要点1","要点2"],"slide_type":"title"}]}。\n'
+        "其中 content_points 必须是包含多个独立字符串的 JSON 数组，绝对不能合并为一个带换行符的单字符串。\n"
         f"3. 总页数必须在{OUTLINE_CONSTRAINTS['min_slides']}-{OUTLINE_CONSTRAINTS['max_slides']}之间。\n"
         "4. 结构必须是：第一页title，中间全部是content，最后一页conclusion。\n"
         f"5. 标题页：{title_constraints['min_points']}-{title_constraints['max_points']}个要点，每点不超过"
@@ -62,8 +63,9 @@ def build_user_prompt(
     """Build the user prompt with concise scenario and language guidance."""
     scenario_hint = SCENARIO_HINTS.get(scenario, SCENARIO_HINTS["general"])
     language_hint = LANGUAGE_HINTS.get(language, LANGUAGE_HINTS["zh"])
+    topic_display = topic.strip() if topic.strip() else "请根据参考材料自动提炼核心主题"
     prompt = (
-        f"主题：{topic}\n"
+        f"主题：{topic_display}\n"
         f"页数：{num_slides}\n"
         f"场景：{scenario}\n"
         f"场景说明：{scenario_hint}\n"

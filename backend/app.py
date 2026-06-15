@@ -1,5 +1,5 @@
 """
-SlideForge v0.1.0 — Flask backend entry point.
+Bashi PPT (巴适PPT) v0.1.0 — Flask backend entry point.
 
 Routes:
   GET  /                      → Serve React frontend
@@ -20,10 +20,13 @@ from config import FLASK_PORT, FLASK_DEBUG, FRONTEND_DIST, LOG_FILE, TEMPLATES_D
 from schema import (
     OutlineRequest,
     LyricsRequest,
+    LLMSettingsRequest,
     LYRICS_LANGUAGE_OPTIONS,
     LYRICS_THEMES_META,
     LYRICS_MODE_LIMITS,
     LYRICS_CHINESE_SCRIPT_OPTIONS,
+    OLLAMA_RECOMMENDED_MODELS,
+    OPENROUTER_RECOMMENDED_MODELS,
     error_response,
     format_validation_errors,
 )
@@ -222,11 +225,18 @@ def generate_outline():
             "The current model returned reasoning only and no final answer. Disable thinking in LM Studio or use a non-reasoning model.",
             502,
         )
-    except (OutlineParseError, OutlineValidationError, OutlineGenerationError) as exc:
-        logger.warning("Invalid model output: %s", exc)
+    except (OutlineParseError, OutlineValidationError) as exc:
+        logger.warning("Invalid model output format: %s", exc)
         return error_response(
             "模型返回的大纲格式无效，请重试或缩短主题描述。",
             "The model returned an invalid outline. Please retry or simplify the topic.",
+            502,
+        )
+    except OutlineGenerationError as exc:
+        logger.warning("LLM API Generation Error: %s", exc)
+        return error_response(
+            f"大纲生成失败 (API 错误): {exc}",
+            f"Outline generation failed (API error): {exc}",
             502,
         )
     except Exception as exc:  # pragma: no cover - defensive fallback
@@ -251,13 +261,15 @@ def generate_pptx():
     
     outline = data.get("outline")
     template_id = data.get("template_id", "teaching")
+    bullet_style = data.get("bullet_style", "dot")
+    theme_id = data.get("theme_id")
     
     if not outline:
         return error_response("请提供完整的大纲数据", "Outline data required", 400)
         
     try:
-        renderer = PPTXRenderer(template_id)
-        pptx_bytes = renderer.render(outline)
+        renderer = PPTXRenderer(template_id, theme_id=theme_id)
+        pptx_bytes = renderer.render(outline, bullet_style=bullet_style)
         
         buffer = BytesIO(pptx_bytes)
         buffer.seek(0)
@@ -446,6 +458,9 @@ def generate_lyrics_pptx():
             add_title_slide=payload.add_title_slide,
             add_amen_slide=payload.add_amen_slide,
             bilingual_pairs=bilingual_pairs,
+            font_family=payload.font_family,
+            font_size_adjustment=payload.font_size_adjustment,
+            line_spacing=payload.line_spacing,
         )
 
         buffer = BytesIO(pptx_bytes)
@@ -470,10 +485,304 @@ def generate_lyrics_pptx():
 
 
 # =====================================================================
+# LLM Settings API
+# =====================================================================
+
+@app.route("/api/settings/llm", methods=["GET"])
+def get_llm_settings():
+    """Return current LLM settings (api_key is masked)."""
+    import config as cfg
+    api_key = cfg.LLM_API_KEY or ""
+    masked = (
+        api_key[:4] + "..." + api_key[-4:]
+        if len(api_key) > 10 else ("*" * len(api_key) if api_key else "")
+    )
+    pixabay_key = getattr(cfg, "PIXABAY_API_KEY", "") or ""
+    pixabay_masked = (
+        pixabay_key[:4] + "..." + pixabay_key[-4:]
+        if len(pixabay_key) > 8 else ("*" * len(pixabay_key) if pixabay_key else "")
+    )
+    return jsonify({
+        "provider":  cfg.LLM_PROVIDER,
+        "base_url":  cfg.LLM_BASE_URL,
+        "model":     cfg.LLM_MODEL,
+        "api_key_masked": masked,
+        "api_key_set": bool(api_key),
+        "pixabay_api_key_masked": pixabay_masked,
+        "pixabay_api_key_set": bool(pixabay_key),
+    })
+
+
+@app.route("/api/settings/llm", methods=["POST"])
+def save_llm_settings():
+    """Persist new LLM settings to .env and hot-reload config."""
+    import config as cfg
+    from config import save_to_env, reload as reload_config
+
+    data = request.get_json(silent=True)
+    if data is None:
+        return error_response("请提供JSON数据", "JSON body required", 400)
+
+    try:
+        payload = LLMSettingsRequest.model_validate(data)
+    except ValidationError as exc:
+        message_zh, message_en = format_validation_errors(exc)
+        return error_response(message_zh, message_en, 422)
+
+    _PROVIDER_DEFAULTS = {
+        "lmstudio":   "http://localhost:1234/v1",
+        "ollama":     "http://localhost:11434/v1",
+        "openrouter": "https://openrouter.ai/api/v1",
+    }
+    base_url = payload.base_url or _PROVIDER_DEFAULTS[payload.provider]
+    if payload.provider in ("lmstudio", "ollama") and base_url:
+        clean_url = base_url.strip().rstrip("/")
+        if not clean_url.endswith("/v1"):
+            base_url = clean_url + "/v1"
+
+    api_key  = payload.api_key or ("lm-studio" if payload.provider != "openrouter" else "")
+    model    = payload.model or cfg.LLM_MODEL
+
+    save_data = {
+        "LLM_PROVIDER": payload.provider,
+        "LLM_BASE_URL": base_url,
+        "LLM_API_KEY": api_key,
+        "LLM_MODEL": model,
+    }
+    
+    if payload.pixabay_api_key is not None:
+        p_key = payload.pixabay_api_key.strip()
+        if p_key and not ("*" in p_key or "..." in p_key):
+            save_data["PIXABAY_API_KEY"] = p_key
+        elif not p_key:
+            save_data["PIXABAY_API_KEY"] = ""
+
+    save_to_env(**save_data)
+    reload_config()
+
+    logger.info("LLM settings updated: provider=%s model=%s", payload.provider, model)
+    return jsonify({"success": True, "provider": payload.provider, "model": model})
+
+
+@app.route("/api/images/search", methods=["GET"])
+def search_images():
+    """Search images on Pixabay."""
+    import config as cfg
+    import urllib.request
+    import urllib.parse
+    import urllib.error
+    import json
+    import ssl
+    
+    query = request.args.get("q", "").strip()
+    if not query:
+        return jsonify({"success": False, "error": "请输入搜索关键字", "images": []}), 400
+        
+    api_key = getattr(cfg, "PIXABAY_API_KEY", "").strip()
+    if not api_key:
+        return jsonify({
+            "success": False,
+            "error": "未配置 Pixabay API Key，请先在右上角⚙️设置中配置。",
+            "images": []
+        }), 400
+        
+    try:
+        # Translate Chinese/non-English query to English for better search results
+        from llm.client import translate_to_english
+        translated_query = translate_to_english(query)
+        lang = "en" if translated_query != query else "zh"
+
+        base_url = "https://pixabay.com/api/?"
+        params = {
+            "key": api_key,
+            "q": translated_query,
+            "image_type": "photo",
+            "per_page": 12,
+            "lang": lang
+        }
+        url = base_url + urllib.parse.urlencode(params)
+        
+        # Disable SSL verification for proxies/VPNs if requested
+        if not getattr(cfg, "VERIFY_SSL", True):
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        else:
+            ctx = None
+        
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        req = urllib.request.Request(url, headers=headers)
+        
+        with urllib.request.urlopen(req, context=ctx, timeout=10) as response:
+            res_data = json.loads(response.read().decode('utf-8'))
+            
+        hits = res_data.get("hits", [])
+        images = []
+        for hit in hits:
+            images.append({
+                "id": hit.get("id"),
+                "preview_url": hit.get("previewURL"),
+                "webformat_url": hit.get("webformatURL"),
+                "large_image_url": hit.get("largeImageURL"),
+                "tags": hit.get("tags")
+            })
+            
+        return jsonify({
+            "success": True,
+            "images": images
+        })
+    except urllib.error.HTTPError as exc:
+        try:
+            err_msg = exc.read().decode('utf-8', errors='ignore').strip()
+        except Exception:
+            err_msg = ""
+        
+        logger.error("Pixabay API HTTPError %d: %s", exc.code, err_msg)
+        if "Invalid or missing API key" in err_msg or exc.code == 400:
+            friendly_err = "Pixabay API Key 无效或失效，请检查右上角 ⚙️ 设置中配置的 Key 是否正确。"
+        else:
+            friendly_err = f"图片搜索服务请求失败: {err_msg or exc.reason}"
+            
+        return jsonify({
+            "success": False,
+            "error": friendly_err,
+            "images": []
+        }), 400
+    except Exception as exc:
+        logger.exception("Error searching images on Pixabay: %s", exc)
+        return jsonify({
+            "success": False,
+            "error": f"图片搜索服务请求失败: {exc}",
+            "images": []
+        }), 502
+
+
+@app.route("/api/settings/recommended-models")
+def recommended_models():
+    """Return recommended model lists for each provider."""
+    return jsonify({
+        "ollama":     OLLAMA_RECOMMENDED_MODELS,
+        "openrouter": OPENROUTER_RECOMMENDED_MODELS,
+    })
+
+
+@app.route("/api/settings/openrouter/free-models")
+def openrouter_free_models():
+    """Fetch the latest free models from OpenRouter."""
+    import config as cfg
+    import httpx
+    try:
+        res = httpx.get("https://openrouter.ai/api/v1/models", verify=getattr(cfg, "VERIFY_SSL", True), timeout=10)
+        res.raise_for_status()
+        models = res.json().get("data", [])
+        
+        free_models = []
+        for m in models:
+            pricing = m.get("pricing", {})
+            if pricing.get("prompt") == "0" and pricing.get("completion") == "0":
+                model_id = m.get("id", "")
+                name = m.get("name", model_id)
+                
+                # Filter for recognized high-quality families to avoid clutter
+                lower_id = model_id.lower()
+                if any(brand in lower_id for brand in ["gemma", "llama", "qwen", "mistral", "phi"]):
+                    # Create a friendly label
+                    brand_name = name.split()[0] if name else "AI"
+                    label = f"{name}（免费）"
+                    free_models.append({"id": model_id, "label": label})
+                    
+        if not free_models:
+            return jsonify({"success": False, "error": "未找到免费模型"})
+            
+        return jsonify({"success": True, "models": free_models})
+    except Exception as exc:
+        logger.warning("Failed to fetch OpenRouter free models: %s", exc)
+        return jsonify({"success": False, "error": str(exc)})
+
+
+
+@app.route("/api/settings/test-llm", methods=["POST"])
+def test_llm_settings():
+    """Test LLM connectivity using the submitted credentials — does NOT save anything."""
+    import config as cfg
+    import httpx
+    from openai import OpenAI, APIConnectionError, APITimeoutError
+
+    data = request.get_json(silent=True)
+    if data is None:
+        return error_response("请提供JSON数据", "JSON body required", 400)
+
+    _PROVIDER_DEFAULTS = {
+        "lmstudio":   "http://localhost:1234/v1",
+        "ollama":     "http://localhost:11434/v1",
+        "openrouter": "https://openrouter.ai/api/v1",
+    }
+
+    provider = (data.get("provider") or "lmstudio").lower()
+    base_url  = data.get("base_url") or _PROVIDER_DEFAULTS.get(provider, _PROVIDER_DEFAULTS["lmstudio"])
+    if provider in ("lmstudio", "ollama") and base_url:
+        clean_url = base_url.strip().rstrip("/")
+        if not clean_url.endswith("/v1"):
+            base_url = clean_url + "/v1"
+
+    api_key   = data.get("api_key") or ("lm-studio" if provider != "openrouter" else "")
+    model     = data.get("model") or ""
+
+    try:
+        client = OpenAI(
+            base_url=base_url,
+            api_key=api_key or "local",
+            timeout=10,
+            http_client=httpx.Client(verify=getattr(cfg, "VERIFY_SSL", True))
+        )
+        models = client.models.list()
+        model_data = getattr(models, "data", None) or []
+        if not model_data:
+            if model:
+                return jsonify({
+                    "connected": True,
+                    "model_id": model,
+                    "message": f"已成功连接到服务。注意：未检测到可用模型列表，将使用配置的模型: {model}"
+                })
+            return jsonify({
+                "connected": False,
+                "message": "已连接到服务，但未检测到已加载的可用模型，且未指定模型名称。请在 LM Studio / Ollama 中加载模型。",
+                "model_id": None
+            })
+        
+        detected_model = model
+        available_ids = [getattr(m, "id", None) for m in model_data if getattr(m, "id", None)]
+        if model and model in available_ids:
+            detected_model = model
+        elif available_ids:
+            detected_model = available_ids[0]
+            
+        return jsonify({
+            "connected": True,
+            "model_id": detected_model,
+            "message": f"已连接：{detected_model}"
+        })
+    except APIConnectionError:
+        return jsonify({"connected": False, "model_id": None,
+                        "message": f"无法连接到 {base_url}，请确认服务正在运行"})
+    except APITimeoutError:
+        return jsonify({"connected": False, "model_id": None,
+                        "message": "连接超时，请检查网络或服务状态"})
+    except Exception as exc:
+        msg = str(exc)
+        if "401" in msg or "authentication" in msg.lower() or "api key" in msg.lower():
+            return jsonify({"connected": False, "model_id": None,
+                            "message": "API Key 无效或已过期，请重新检查"})
+        logger.warning("LLM settings test error: %s", exc)
+        return jsonify({"connected": False, "model_id": None, "message": f"连接失败：{msg[:120]}"})
+
+
+
+# =====================================================================
 # Entry point
 # =====================================================================
 
 if __name__ == "__main__":
-    logger.info(f"SlideForge v0.1.0 starting on http://127.0.0.1:{FLASK_PORT}")
+    logger.info(f"Bashi PPT v0.1.0 starting on http://127.0.0.1:{FLASK_PORT}")
     logger.info(f"Frontend served from: {FRONTEND_DIST}")
     app.run(debug=FLASK_DEBUG, host="127.0.0.1", port=FLASK_PORT)
