@@ -45,7 +45,7 @@ export default function TopicInput({ onSubmit, isLoading }) {
 
   const handleSubmit = (event) => {
     event.preventDefault();
-    if (!topic.trim()) return;
+    if (!topic.trim() && !referenceText.trim()) return;
 
     onSubmit({
       topic: topic.trim(),
@@ -83,7 +83,6 @@ export default function TopicInput({ onSubmit, isLoading }) {
             className="bashi-input w-full rounded-2xl px-4 py-3 text-base"
             maxLength={200}
             disabled={isLoading}
-            required
           />
         </div>
 
@@ -192,7 +191,7 @@ export default function TopicInput({ onSubmit, isLoading }) {
       <div className="mt-8 space-y-4">
         <button
           type="submit"
-          disabled={!topic.trim() || isLoading}
+          disabled={(!topic.trim() && !referenceText.trim()) || isLoading}
           className="bashi-btn-primary w-full rounded-2xl px-6 py-4 text-lg font-semibold"
         >
           {isLoading ? '正在生成大纲...' : '生成大纲 Generate Outline'}
@@ -201,14 +200,14 @@ export default function TopicInput({ onSubmit, isLoading }) {
         {isLoading && (
           <div className="rounded-2xl border border-bashi-border bg-black/25 px-4 py-4">
             <div className="mb-3 flex items-center justify-between gap-4 text-sm text-bashi-text-secondary">
-              <span className="font-medium text-bashi-text">本地模型正在思考中</span>
+              <span className="font-medium text-bashi-text">AI 模型正在思考中</span>
               <span className="text-bashi-copper">已等待 {formatElapsed(elapsedSeconds)}</span>
             </div>
             <div className="bashi-progress-track">
               <div className="bashi-progress-indeterminate" />
             </div>
             <div className="mt-3 text-sm leading-6 text-bashi-text-secondary">
-              正在生成 outline。这个进度条只表示“仍在工作中”，不代表精确百分比。通常需要 3-5 分钟。
+              正在生成 outline。云端模型通常在十几秒内完成，本地模型可能需要几分钟。进度条仅表示“仍在工作中”。
             </div>
           </div>
         )}

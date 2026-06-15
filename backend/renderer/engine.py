@@ -11,6 +11,7 @@ import logging
 from .theme import THEMES
 from .slide_layouts import LAYOUTS, SLIDE_WIDTH, SLIDE_HEIGHT
 from .utils import hex_to_rgb, set_font
+import config
 from config import TEMPLATES_DIR
 
 logger = logging.getLogger("slideforge")
@@ -50,7 +51,15 @@ def _fit_text_in_box(max_height_inches, box_width_inches, content_points, base_f
 
     # Still overflowing, truncate text
     layout_warning = True
+    max_iterations = 1000
+    iterations = 0
     while points and estimate_text_height(points, font_size, box_width_inches, line_spacing) > max_height_inches:
+        iterations += 1
+        if iterations > max_iterations:
+            logger.warning("Reached maximum iterations in _fit_text_in_box. Force truncating.")
+            points.pop()
+            continue
+            
         if len(points[-1]) > 5:
             points[-1] = points[-1][:-5] + "..."
         else:
@@ -59,7 +68,7 @@ def _fit_text_in_box(max_height_inches, box_width_inches, content_points, base_f
     return font_size, line_spacing, points, layout_warning
 
 class PPTXRenderer:
-    def __init__(self, template_id: str):
+    def __init__(self, template_id: str, theme_id: str | None = None):
         self.template_id = template_id
         template_path = TEMPLATES_DIR / f"{template_id}.json"
         
@@ -69,7 +78,9 @@ class PPTXRenderer:
         with open(template_path, 'r', encoding='utf-8') as f:
             self.template_config = json.load(f)
             
-        theme_id = self.template_config.get("theme", "clean_blue")
+        if not theme_id:
+            theme_id = self.template_config.get("theme", "clean_blue")
+            
         self.theme = THEMES.get(theme_id, THEMES["clean_blue"])
         self.layout_mapping = self.template_config.get("layout_mapping", {})
         
@@ -77,7 +88,7 @@ class PPTXRenderer:
         self.fonts = self.theme["fonts"]
         self.decorations = self.theme["decorations"]
 
-    def render(self, outline: dict) -> bytes:
+    def render(self, outline: dict, bullet_style: str = "dot") -> bytes:
         prs = Presentation()
         prs.slide_width = SLIDE_WIDTH
         prs.slide_height = SLIDE_HEIGHT
@@ -86,7 +97,7 @@ class PPTXRenderer:
         total_slides = len(slides_data)
         
         for idx, slide_data in enumerate(slides_data):
-            self._render_slide(prs, slide_data, idx + 1, total_slides)
+            self._render_slide(prs, slide_data, idx + 1, total_slides, bullet_style=bullet_style)
             
         buffer = BytesIO()
         prs.save(buffer)
@@ -104,7 +115,7 @@ class PPTXRenderer:
         fill.fore_color.rgb = bg_color
         return slide
 
-    def _render_slide(self, prs, slide_data: dict, current: int, total: int):
+    def _render_slide(self, prs, slide_data: dict, current: int, total: int, bullet_style: str = "dot"):
         slide_type = slide_data.get("slide_type", "content")
         layout_id = self.layout_mapping.get(slide_type)
         if slide_type == "title":
@@ -115,7 +126,7 @@ class PPTXRenderer:
             self._render_conclusion_slide(prs, slide_data, layout_id, current, total)
         else:
             layout_id = layout_id or "ContentBulletLayout"
-            self._render_content_slide(prs, slide_data, layout_id, current, total)
+            self._render_content_slide(prs, slide_data, layout_id, current, total, bullet_style=bullet_style)
             
     def _render_title_slide(self, prs, slide_data: dict, layout_id: str, current: int, total: int):
         slide = self._create_blank_slide(prs)
@@ -158,7 +169,42 @@ class PPTXRenderer:
             shape.fill.fore_color.rgb = hex_to_rgb(self.colors["accent"])
             shape.line.fill.background()
             
-    def _render_content_slide(self, prs, slide_data: dict, layout_id: str, current: int, total: int):
+    def _download_image(self, url: str) -> str | None:
+        """Download an image to a temporary file, returning the path."""
+        import urllib.request
+        import tempfile
+        import ssl
+        from pathlib import Path
+        
+        try:
+            suffix = Path(url).suffix or ".jpg"
+            if "?" in suffix:
+                suffix = suffix.split("?")[0]
+            if suffix.lower() not in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"]:
+                suffix = ".jpg"
+                
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            
+            # Disable SSL verification for proxies/VPNs if requested
+            if not getattr(config, "VERIFY_SSL", True):
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+            else:
+                ctx = None
+            
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            req = urllib.request.Request(url, headers=headers)
+            
+            with urllib.request.urlopen(req, context=ctx, timeout=10) as response, open(temp_file.name, 'wb') as out_file:
+                out_file.write(response.read())
+                
+            return temp_file.name
+        except Exception as e:
+            logger.error(f"Failed to download image {url}: {e}")
+            return None
+
+    def _render_content_slide(self, prs, slide_data: dict, layout_id: str, current: int, total: int, bullet_style: str = "dot"):
         slide = self._create_blank_slide(prs)
         layout = LAYOUTS.get(layout_id, LAYOUTS["ContentBulletLayout"])
         
@@ -175,19 +221,55 @@ class PPTXRenderer:
                          
         # Points
         points = slide_data.get("content_points", [])
-        c_box = layout["content_box"]
+        bullet_prefixes = {
+            "dot": "•  ",
+            "square": "▪  ",
+            "arrow": "➢  ",
+            "dash": "-  ",
+            "none": "",
+        }
+        bullet_prefix = bullet_prefixes.get(bullet_style, "•  ")
+        bulleted_points = [f"{bullet_prefix}{pt}" if pt else pt for pt in points]
+        
+        # Check if slide has image
+        image_url = slide_data.get("image_url")
+        temp_img_path = None
+        has_image = False
+        
+        if image_url:
+            temp_img_path = self._download_image(image_url)
+            if temp_img_path:
+                has_image = True
+                
+        if has_image:
+            # Side-by-side coordinates
+            c_box_left = Inches(1.0)
+            c_box_top = Inches(1.8)
+            c_box_w = Inches(6.2)
+            c_box_h = Inches(4.8)
+            
+            image_left = Inches(7.8)
+            image_top = Inches(1.8)
+            image_w = Inches(4.5)
+            image_h = Inches(4.5)
+        else:
+            c_box = layout["content_box"]
+            c_box_left = c_box["left"]
+            c_box_top = c_box["top"]
+            c_box_w = c_box["width"]
+            c_box_h = c_box["height"]
         
         # Calculate overflow
-        box_w = c_box["width"].inches
-        box_h = c_box["height"].inches
+        box_w = c_box_w.inches
+        box_h = c_box_h.inches
         f_size, line_spacing, fitted_points, layout_warning = _fit_text_in_box(
-            box_h, box_w, points, base_font_size=self.fonts.get("body_size", 20)
+            box_h, box_w, bulleted_points, base_font_size=self.fonts.get("body_size", 20)
         )
         if layout_warning:
             logger.warning(f"Text overflow on slide {current}, truncated content.")
             
         if fitted_points:
-            cxBox = slide.shapes.add_textbox(c_box["left"], c_box["top"], c_box["width"], c_box["height"])
+            cxBox = slide.shapes.add_textbox(c_box_left, c_box_top, c_box_w, c_box_h)
             cf = cxBox.text_frame
             cf.word_wrap = True
             
@@ -203,8 +285,49 @@ class PPTXRenderer:
                 set_chinese_font(run, font_name=self.fonts["body"], size_pt=f_size, 
                                  color=hex_to_rgb(self.colors["text"]))
 
-        # Optional accent bar
-        if self.decorations.get("accent_bar", False) and "accent_bar" in layout:
+        # Add image shape if present
+        if has_image and temp_img_path:
+            import os
+            from PIL import Image
+            try:
+                # Open image using Pillow to check dimensions and aspect ratio
+                with Image.open(temp_img_path) as img:
+                    orig_w, orig_h = img.size
+                
+                # Default box boundaries: 4.5" x 4.5" centered in the right column
+                max_w = Inches(4.5)
+                max_h = Inches(4.5)
+                box_left = Inches(7.8)
+                box_top = Inches(1.8)
+                
+                # Keep aspect ratio and center inside the bounding box
+                ratio = orig_w / orig_h
+                if ratio > 1.0:  # Landscape
+                    final_w = max_w
+                    final_h = Inches(4.5 / ratio)
+                else:  # Portrait / Square
+                    final_h = max_h
+                    final_w = Inches(4.5 * ratio)
+                
+                final_left = box_left + (max_w - final_w) / 2
+                final_top = box_top + (max_h - final_h) / 2
+                
+                slide.shapes.add_picture(temp_img_path, final_left, final_top, width=final_w, height=final_h)
+            except Exception as e:
+                logger.error(f"Failed to add picture to slide {current}: {e}")
+                # Fallback to default stretched placement if Pillow analysis fails
+                try:
+                    slide.shapes.add_picture(temp_img_path, image_left, image_top, width=image_w, height=image_h)
+                except Exception as fallback_err:
+                    logger.error(f"Fallback add picture also failed: {fallback_err}")
+            finally:
+                try:
+                    os.unlink(temp_img_path)
+                except Exception:
+                    pass
+
+        # Optional accent bar (only if no image, to avoid clutter)
+        if not has_image and self.decorations.get("accent_bar", False) and "accent_bar" in layout:
             bar_box = layout["accent_bar"]
             shape = slide.shapes.add_shape(
                 1, # MSO_SHAPE.RECTANGLE
@@ -250,6 +373,9 @@ class PPTXRenderer:
                     run.text = point
                 set_chinese_font(run, font_name=self.fonts["body"], size_pt=self.fonts.get("body_size", 20), 
                                  color=hex_to_rgb(self.colors["secondary"]))
+
+        # Page Number
+        self._add_slide_number(slide, layout, current, total)
 
     def _add_slide_number(self, slide, layout, current: int, total: int):
         if "page_number" not in layout:

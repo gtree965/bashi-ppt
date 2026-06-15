@@ -1,0 +1,13 @@
+{
+  "id": "default",
+  "name": "默认简约 (Default)",
+  "description": "适合通用主题、通用演示",
+  "theme": "clean_blue",
+  "default_slides": 8,
+  "default_scenario": "general",
+  "layout_mapping": {
+    "title": "TitleCenterLayout",
+    "content": "ContentBulletLayout",
+    "conclusion": "ConclusionLayout"
+  }
+}

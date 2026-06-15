@@ -1,0 +1,13 @@
+{
+  "id": "professional",
+  "name": "商务会议 (Professional)",
+  "description": "适合汇报、说明会或商务场合",
+  "theme": "warm_earth",
+  "default_slides": 8,
+  "default_scenario": "parents",
+  "layout_mapping": {
+    "title": "TitleCenterLayout",
+    "content": "ContentBulletLayout",
+    "conclusion": "ConclusionLayout"
+  }
+}
