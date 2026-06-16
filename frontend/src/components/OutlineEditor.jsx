@@ -14,6 +14,24 @@ const SLIDE_TYPE_LABELS = {
   conclusion: '总结页',
 };
 
+// Build a top-down Mermaid flowchart from a plain list of steps (one per line),
+// so users can type "数据输入 / 统计模型 / 特征提取" instead of Mermaid syntax.
+function stepsToMermaid(stepsText) {
+  const lines = (stepsText || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return '';
+  // Double quotes would break the quoted label; swap for safe single quotes.
+  const node = (i) => `n${i}["${lines[i].replace(/"/g, "'")}"]`;
+  if (lines.length === 1) return `flowchart TD\n  ${node(0)}`;
+  let body = '';
+  for (let i = 0; i < lines.length - 1; i++) {
+    body += `  ${node(i)} --> ${node(i + 1)}\n`;
+  }
+  return `flowchart TD\n${body}`.trimEnd();
+}
+
 const SLIDE_CONSTRAINTS = {
   title: {
     minPoints: 2,
@@ -44,6 +62,11 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
   // is treated as stale (and re-rendered) whenever the slide's diagram differs — this
   // guards against page_number reuse after add/remove renumbers slides.
   const [diagramPreviews, setDiagramPreviews] = useState({});
+  // Diagram editors are collapsed by default; expanded once a slide has a diagram
+  // or the user explicitly opens one. Keyed by page_number.
+  const [openDiagrams, setOpenDiagrams] = useState(() => new Set());
+  // Per-slide input mode: 'simple' (steps, one per line) or 'advanced' (raw Mermaid).
+  const [diagramModes, setDiagramModes] = useState({});
 
   const renderDiagramPreview = async (pageNumber, mermaid) => {
     const source = (mermaid || '').trim();
@@ -153,6 +176,43 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
     updated.slides = [...updated.slides];
     updated.slides[slideIndex] = { ...updated.slides[slideIndex], diagram: diagram || undefined };
     onOutlineChange(updated);
+  };
+
+  // Simple mode: store the user's raw step lines and (re)derive the Mermaid from them.
+  const updateSlideDiagramSteps = (slideIndex, stepsText) => {
+    const updated = { ...outline };
+    updated.slides = [...updated.slides];
+    updated.slides[slideIndex] = {
+      ...updated.slides[slideIndex],
+      diagram_steps: stepsText || undefined,
+      diagram: stepsToMermaid(stepsText) || undefined,
+    };
+    onOutlineChange(updated);
+  };
+
+  const clearSlideDiagram = (slideIndex, pageNumber) => {
+    const updated = { ...outline };
+    updated.slides = [...updated.slides];
+    updated.slides[slideIndex] = {
+      ...updated.slides[slideIndex],
+      diagram: undefined,
+      diagram_steps: undefined,
+    };
+    onOutlineChange(updated);
+    setOpenDiagrams((prev) => {
+      const next = new Set(prev);
+      next.delete(pageNumber);
+      return next;
+    });
+  };
+
+  const openDiagram = (pageNumber, mode = 'simple') => {
+    setOpenDiagrams((prev) => new Set(prev).add(pageNumber));
+    setDiagramModes((prev) => ({ ...prev, [pageNumber]: mode }));
+  };
+
+  const setDiagramMode = (pageNumber, mode) => {
+    setDiagramModes((prev) => ({ ...prev, [pageNumber]: mode }));
   };
 
   const openSearch = (slideIndex, currentTitle) => {
@@ -317,51 +377,122 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
                 </div>
               )}
 
-              {/* Optional hand-drawn diagram (Mermaid) for content slide */}
-              {slide.slide_type === 'content' && (
-                <div className="mt-4 border-t border-white/5 pt-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-bashi-text-secondary">手绘图示 Diagram (Mermaid)</span>
-                    <button
-                      type="button"
-                      onClick={() => renderDiagramPreview(slide.page_number, slide.diagram)}
-                      disabled={!(slide.diagram || '').trim()}
-                      className="rounded-full border border-white/10 px-3.5 py-1.5 text-xs text-bashi-text-secondary transition hover:border-bashi-border-focus hover:text-bashi-text disabled:opacity-40"
-                    >
-                      预览 Preview
-                    </button>
-                  </div>
-                  <textarea
-                    value={slide.diagram || ''}
-                    onChange={(event) => updateSlideDiagram(slideIndex, event.target.value)}
-                    placeholder="flowchart TD; A[输入] --> B[处理] --> C[输出]"
-                    rows={3}
-                    className="bashi-input mt-2 w-full rounded-2xl px-4 py-2.5 font-mono text-xs"
-                  />
-                  {slide.image_url && (slide.diagram || '').trim() && (
-                    <p className="mt-2 text-xs text-amber-200/80">
-                      该页已有配图，导出时将优先使用配图，图示不会显示。
-                    </p>
-                  )}
-                  {(() => {
-                    const preview = diagramPreviews[slide.page_number];
-                    // Only trust a preview rendered from the slide's current Mermaid;
-                    // a mismatch means it's stale and the effect will re-render it.
-                    if (!preview || preview.source !== (slide.diagram || '').trim()) return null;
-                    if (preview.status === 'loading') {
-                      return <p className="mt-2 text-xs text-bashi-text-muted">渲染中…</p>;
-                    }
-                    if (preview.status === 'error') {
-                      return <p className="mt-2 text-xs text-red-200">Mermaid 语法有误，无法渲染。</p>;
-                    }
-                    return (
-                      <div className="mt-2 overflow-hidden rounded-xl border border-white/10 bg-white p-2">
-                        <img src={preview.url} alt="Diagram preview" className="mx-auto max-h-48 object-contain" />
+              {/* Optional hand-drawn diagram for content slide (collapsed until added) */}
+              {slide.slide_type === 'content' && (() => {
+                const pageNumber = slide.page_number;
+                const hasDiagram = !!(slide.diagram || '').trim() || !!(slide.diagram_steps || '').trim();
+                const isOpen = hasDiagram || openDiagrams.has(pageNumber);
+
+                if (!isOpen) {
+                  return (
+                    <div className="mt-4 border-t border-white/5 pt-4">
+                      <button
+                        type="button"
+                        onClick={() => openDiagram(pageNumber, 'simple')}
+                        className="flex items-center gap-1.5 rounded-full border border-dashed border-bashi-border px-4 py-2 text-xs text-bashi-text-secondary transition hover:border-bashi-border-focus hover:text-bashi-text"
+                      >
+                        📈 + 添加图示
+                      </button>
+                    </div>
+                  );
+                }
+
+                // LLM-supplied diagrams arrive as Mermaid (no steps) → default to advanced.
+                const mode = diagramModes[pageNumber] ?? (slide.diagram && !slide.diagram_steps ? 'advanced' : 'simple');
+                const preview = diagramPreviews[pageNumber];
+
+                return (
+                  <div className="mt-4 border-t border-white/5 pt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs text-bashi-text-secondary">手绘图示 Diagram</span>
+                      <div className="flex items-center gap-2">
+                        <div className="inline-flex rounded-full border border-white/10 p-0.5 text-xs">
+                          <button
+                            type="button"
+                            onClick={() => setDiagramMode(pageNumber, 'simple')}
+                            className={`rounded-full px-2.5 py-1 transition ${mode === 'simple' ? 'bg-bashi-copper/20 text-bashi-copper' : 'text-bashi-text-muted hover:text-bashi-text-secondary'}`}
+                          >
+                            步骤
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDiagramMode(pageNumber, 'advanced')}
+                            className={`rounded-full px-2.5 py-1 transition ${mode === 'advanced' ? 'bg-bashi-copper/20 text-bashi-copper' : 'text-bashi-text-muted hover:text-bashi-text-secondary'}`}
+                          >
+                            Mermaid
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => renderDiagramPreview(pageNumber, slide.diagram)}
+                          disabled={!(slide.diagram || '').trim()}
+                          className="rounded-full border border-white/10 px-3 py-1 text-xs text-bashi-text-secondary transition hover:border-bashi-border-focus hover:text-bashi-text disabled:opacity-40"
+                        >
+                          预览
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => clearSlideDiagram(slideIndex, pageNumber)}
+                          className="rounded-full border border-white/10 px-3 py-1 text-xs text-bashi-text-muted transition hover:border-red-300/40 hover:text-red-200"
+                        >
+                          删除
+                        </button>
                       </div>
-                    );
-                  })()}
-                </div>
-              )}
+                    </div>
+
+                    {mode === 'simple' ? (
+                      <>
+                        <textarea
+                          value={slide.diagram_steps || ''}
+                          onChange={(event) => updateSlideDiagramSteps(slideIndex, event.target.value)}
+                          placeholder={'每行一个步骤，自动生成流程图：\n数据输入\n统计模型\n特征提取\n分类结果'}
+                          rows={4}
+                          className="bashi-input mt-2 w-full rounded-2xl px-4 py-2.5 text-sm"
+                        />
+                        <p className="mt-1 text-xs text-bashi-text-muted">
+                          每行一个步骤，按顺序自动连成自上而下的流程图。
+                        </p>
+                        {slide.diagram && !slide.diagram_steps && (
+                          <p className="mt-1 text-xs text-amber-200/80">
+                            当前图示为 Mermaid 代码；在此输入步骤会将其替换。
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <textarea
+                        value={slide.diagram || ''}
+                        onChange={(event) => updateSlideDiagram(slideIndex, event.target.value)}
+                        placeholder="flowchart TD; A[输入] --> B[处理] --> C[输出]"
+                        rows={4}
+                        className="bashi-input mt-2 w-full rounded-2xl px-4 py-2.5 font-mono text-xs"
+                      />
+                    )}
+
+                    {slide.image_url && (slide.diagram || '').trim() && (
+                      <p className="mt-2 text-xs text-amber-200/80">
+                        该页已有配图，导出时将优先使用配图，图示不会显示。
+                      </p>
+                    )}
+
+                    {(() => {
+                      // Only trust a preview rendered from the slide's current Mermaid;
+                      // a mismatch means it's stale and the effect will re-render it.
+                      if (!preview || preview.source !== (slide.diagram || '').trim()) return null;
+                      if (preview.status === 'loading') {
+                        return <p className="mt-2 text-xs text-bashi-text-muted">渲染中…</p>;
+                      }
+                      if (preview.status === 'error') {
+                        return <p className="mt-2 text-xs text-red-200">图示语法有误，无法渲染。</p>;
+                      }
+                      return (
+                        <div className="mt-2 overflow-hidden rounded-xl border border-white/10 bg-white p-2">
+                          <img src={preview.url} alt="Diagram preview" className="mx-auto max-h-48 object-contain" />
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })()}
             </div>
           );
         })}

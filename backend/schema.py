@@ -59,6 +59,7 @@ class SlideData(BaseModel):
     slide_type: Literal["title", "content", "conclusion"]
     image_url: Optional[str] = Field(default=None, description="Optional image URL for the slide")
     diagram: Optional[str] = Field(default=None, description="Optional Mermaid diagram code (content slides only)")
+    diagram_steps: Optional[str] = Field(default=None, description="Optional newline-separated steps the user typed; the UI builds `diagram` from these")
     diagram_image: Optional[str] = Field(default=None, description="Optional base64 data-URL of the rendered hand-drawn diagram")
 
     @field_validator("content_points")
