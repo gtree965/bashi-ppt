@@ -115,15 +115,14 @@ Manual end-to-end verification, requires LM Studio + a browser:
 
 Each is independent and well-bounded. Pick any.
 
-### Task A — Lazy-load the diagram libraries (perf; recommended)
-**Problem:** `@excalidraw/excalidraw` + `mermaid` are huge; the build warns about >500 KB
-chunks and they're pulled into the initial load even though most users never make a diagram.
-**Do:** Convert `frontend/src/utils/diagramRenderer.js` to dynamic-import the Excalidraw and
-mermaid-to-excalidraw modules inside `mermaidToPngDataUrl` (`const { exportToBlob, ... } =
-await import('@excalidraw/excalidraw')`). Ensure `OutlineEditor.jsx` and `App.jsx` still call
-the same async API (no signature change). Verify `npm run build` produces a separate async
-chunk and the main bundle shrinks. Do NOT break the offline font copy (still needed).
-**Done when:** build succeeds, diagram chunk is split out, preview + export still work.
+### Task A — DONE (lazy-loaded diagram libraries)
+
+Implemented: `frontend/src/utils/diagramRenderer.js` now dynamically `import()`s
+`@excalidraw/excalidraw` and `@excalidraw/mermaid-to-excalidraw` inside
+`mermaidToPngDataUrl` (same async signature, so `OutlineEditor.jsx` / `App.jsx` are
+unchanged). Result: the main bundle dropped from **~1,468 KB → ~236 KB**; Excalidraw
+(~1.78 MB) and mermaid now load as separate async chunks only when a diagram is first
+rendered. Offline font copy is unaffected (still set in index.html + copied to dist/fonts).
 
 ### Task B — DONE (debounced live preview)
 

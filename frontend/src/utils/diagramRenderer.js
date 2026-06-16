@@ -6,8 +6,10 @@
 // non-issue. The resulting data-URL is attached to the slide as `diagram_image`
 // and decoded server-side in engine.py.
 
-import { parseMermaidToExcalidraw } from '@excalidraw/mermaid-to-excalidraw';
-import { convertToExcalidrawElements, exportToBlob } from '@excalidraw/excalidraw';
+// The Excalidraw + mermaid libraries are large (~1.4 MB). They are imported
+// dynamically inside mermaidToPngDataUrl so they land in a separate async chunk
+// loaded only when a diagram is actually rendered — keeping them out of the
+// initial bundle for users who never make a diagram.
 
 function blobToDataUrl(blob) {
   return new Promise((resolve, reject) => {
@@ -28,6 +30,12 @@ export async function mermaidToPngDataUrl(mermaid) {
   if (!source) return null;
 
   try {
+    const [{ parseMermaidToExcalidraw }, { convertToExcalidrawElements, exportToBlob }] =
+      await Promise.all([
+        import('@excalidraw/mermaid-to-excalidraw'),
+        import('@excalidraw/excalidraw'),
+      ]);
+
     const { elements } = await parseMermaidToExcalidraw(source);
     const excalidrawElements = convertToExcalidrawElements(elements);
     if (!excalidrawElements.length) return null;
