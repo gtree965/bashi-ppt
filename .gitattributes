@@ -1,0 +1,4 @@
+# Treat the committed frontend build output as generated:
+# - skip whitespace checks (git diff --check) on minified bundles
+# - collapse it in diffs / mark as generated on GitHub
+frontend/dist/** -whitespace linguist-generated=true
