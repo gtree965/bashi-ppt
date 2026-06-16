@@ -174,7 +174,13 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
   const updateSlideDiagram = (slideIndex, diagram) => {
     const updated = { ...outline };
     updated.slides = [...updated.slides];
-    updated.slides[slideIndex] = { ...updated.slides[slideIndex], diagram: diagram || undefined };
+    // Editing raw Mermaid makes any stored steps stale, so drop them — otherwise a
+    // remount would default back to simple mode and show/overwrite outdated steps.
+    updated.slides[slideIndex] = {
+      ...updated.slides[slideIndex],
+      diagram: diagram || undefined,
+      diagram_steps: undefined,
+    };
     onOutlineChange(updated);
   };
 

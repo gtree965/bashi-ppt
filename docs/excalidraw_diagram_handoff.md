@@ -42,8 +42,10 @@ the parser; `/api/generate-pptx` renders the raw dict without re-validation.
 ## 2. What Is DONE (implemented, tested — do not redo)
 
 ### Backend
-- **`backend/schema.py`** — `SlideData` now has optional `diagram: Optional[str]` and
-  `diagram_image: Optional[str]`.
+- **`backend/schema.py`** — `SlideData` now has optional `diagram: Optional[str]` (Mermaid),
+  `diagram_steps: Optional[str]` (the user's raw step lines; UI builds `diagram` from these),
+  and `diagram_image: Optional[str]` (base64 data-URL of the rendered diagram). All client-set
+  except `diagram`, which the LLM may supply.
 - **`backend/llm/outline_parser.py`** — `_normalize_outline` copies a non-empty `diagram`
   through **on content slides only**; `chart_config`/`image_config`/`description`/`type`
   still stripped. `diagram` is intentionally NOT in `FORBIDDEN_FIELDS`.
@@ -64,14 +66,24 @@ the parser; `/api/generate-pptx` renders the raw dict without re-validation.
   `parseMermaidToExcalidraw` → `convertToExcalidrawElements` → `exportToBlob` → data-URL.
   Runs **headless** (no `<Excalidraw>` component mount), so React 19 incompatibility of the
   component is irrelevant. Returns `null` on invalid Mermaid (recoverable).
-- **`frontend/src/components/OutlineEditor.jsx`** — on content slides: a Mermaid `<textarea>`
-  (`updateSlideDiagram`), a "预览/Preview" button, inline preview image, loading/error states,
-  and a note when a search image will take precedence. Previews live in `diagramPreviews`
-  state keyed by `page_number`, each tagged with the `source` Mermaid it was rendered from
-  so renumbering/edits self-correct. A **debounced** (600 ms) `useEffect` auto-renders any
-  content slide whose `diagram` lacks an up-to-date preview (LLM-supplied, user-edited, or
-  stale after renumber) — debounced so typing doesn't render on every keystroke. The manual
-  Preview button renders immediately.
+- **`frontend/src/components/OutlineEditor.jsx`** — diagram editing on content slides:
+  - **Collapsed by default**: shows a `📈 + 添加图示` button until the slide has a diagram or
+    the user opens one (`openDiagrams` set, keyed by `page_number`). A **删除** button clears
+    the diagram and collapses again. (Note: clearing the textarea alone does not auto-collapse;
+    only 删除 does.)
+  - **Two input modes** (`diagramModes` per `page_number`): **步骤/Steps** (default for
+    user-created) — a textarea of one step per line stored in `diagram_steps`, from which
+    `stepsToMermaid()` builds a top-down `flowchart TD` into `diagram`; and **Mermaid**
+    (advanced, default for LLM-supplied diagrams which have `diagram` but no `diagram_steps`)
+    — raw Mermaid editing via `updateSlideDiagram`, which **clears `diagram_steps`** so the
+    two never go stale relative to each other.
+  - **No manual preview button** — a **debounced** (600 ms) `useEffect` auto-renders any
+    content slide whose `diagram` lacks an up-to-date preview (LLM-supplied, edited, or stale
+    after a renumber), so the preview just appears shortly after typing stops. Previews live
+    in `diagramPreviews` keyed by `page_number`, each tagged with the `source` Mermaid it was
+    rendered from so renumbering/edits self-correct; the displayed image is suppressed unless
+    its `source` matches the slide's current `diagram`.
+  - An inline amber note warns when a search image will take precedence over the diagram.
 - **`frontend/src/App.jsx`** — `ensureDiagramImages(outline)` renders a **fresh** PNG for each
   content slide's `diagram` right before `generatePptx` (avoids stale images) and clears
   `diagram_image` when `image_url` is set. Called in `handleGeneratePptx`.
