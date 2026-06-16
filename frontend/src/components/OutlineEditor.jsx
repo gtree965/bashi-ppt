@@ -424,14 +424,6 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
                         </div>
                         <button
                           type="button"
-                          onClick={() => renderDiagramPreview(pageNumber, slide.diagram)}
-                          disabled={!(slide.diagram || '').trim()}
-                          className="rounded-full border border-white/10 px-3 py-1 text-xs text-bashi-text-secondary transition hover:border-bashi-border-focus hover:text-bashi-text disabled:opacity-40"
-                        >
-                          预览
-                        </button>
-                        <button
-                          type="button"
                           onClick={() => clearSlideDiagram(slideIndex, pageNumber)}
                           className="rounded-full border border-white/10 px-3 py-1 text-xs text-bashi-text-muted transition hover:border-red-300/40 hover:text-red-200"
                         >
