@@ -334,7 +334,7 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
                   <textarea
                     value={slide.diagram || ''}
                     onChange={(event) => updateSlideDiagram(slideIndex, event.target.value)}
-                    placeholder="flowchart LR; A[输入] --> B[处理] --> C[输出]"
+                    placeholder="flowchart TD; A[输入] --> B[处理] --> C[输出]"
                     rows={3}
                     className="bashi-input mt-2 w-full rounded-2xl px-4 py-2.5 font-mono text-xs"
                   />

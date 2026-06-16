@@ -50,8 +50,9 @@ def build_system_prompt() -> str:
         "8. page_number 必须从1开始连续编号。\n"
         "9. 不要生成chart_config、image_config、description或type字段。\n"
         "10. 仅在内容页（content），当某页适合用流程图、关系图或步骤图来解释时，"
-        "可以可选地添加一个 diagram 字段，值为合法的 Mermaid 代码"
-        '（例如 "flowchart LR; A[输入]-->B[处理]-->C[输出]"）。'
+        "可以可选地添加一个 diagram 字段，值为合法的 Mermaid 代码。"
+        "图示会放在幻灯片右侧较窄的竖向区域，请优先使用自上而下的纵向布局"
+        '（例如 "flowchart TD; A[输入]-->B[处理]-->C[输出]"），避免过宽的横向（LR）布局。'
         "节点文字要简短。若该页不需要图示，则省略 diagram 字段。标题页和总结页不要加 diagram。\n"
         "11. 内容要贴合主题，顺序自然，适合目标受众。"
     )
