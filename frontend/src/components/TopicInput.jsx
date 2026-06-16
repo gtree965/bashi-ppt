@@ -28,12 +28,18 @@ export default function TopicInput({ onSubmit, isLoading }) {
   const [scenario, setScenario] = useState('teaching');
   const [language, setLanguage] = useState('zh');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [wasLoading, setWasLoading] = useState(isLoading);
+
+  // Reset the timer whenever loading starts/stops. Done during render (React's
+  // "adjust state when a prop changes" pattern) instead of a synchronous setState
+  // in the effect body, which causes cascading renders.
+  if (wasLoading !== isLoading) {
+    setWasLoading(isLoading);
+    setElapsedSeconds(0);
+  }
 
   useEffect(() => {
-    if (!isLoading) {
-      setElapsedSeconds(0);
-      return undefined;
-    }
+    if (!isLoading) return undefined;
 
     const startedAt = Date.now();
     const intervalId = window.setInterval(() => {

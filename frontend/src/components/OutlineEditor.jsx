@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import ImageSearchModal from './ImageSearchModal';
+import { mermaidToPngDataUrl } from '../utils/diagramRenderer';
 
 const SLIDE_TYPE_STYLES = {
   title: 'border-[#d4a373] bg-[rgba(212,163,115,0.08)]',
@@ -38,6 +39,52 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeSlideIndex, setActiveSlideIndex] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  // Per-slide diagram preview, keyed by page_number: { status, url, source }.
+  // `source` records the Mermaid string the preview was rendered from, so a preview
+  // is treated as stale (and re-rendered) whenever the slide's diagram differs — this
+  // guards against page_number reuse after add/remove renumbers slides.
+  const [diagramPreviews, setDiagramPreviews] = useState({});
+
+  const renderDiagramPreview = async (pageNumber, mermaid) => {
+    const source = (mermaid || '').trim();
+    if (!source) {
+      setDiagramPreviews((prev) => ({ ...prev, [pageNumber]: undefined }));
+      return;
+    }
+    setDiagramPreviews((prev) => ({ ...prev, [pageNumber]: { status: 'loading', source } }));
+    const url = await mermaidToPngDataUrl(source);
+    setDiagramPreviews((prev) => {
+      // Ignore a result whose source was superseded while rendering.
+      const current = prev[pageNumber];
+      if (current && current.source !== source) return prev;
+      return {
+        ...prev,
+        [pageNumber]: url ? { status: 'ok', url, source } : { status: 'error', source },
+      };
+    });
+  };
+
+  // Auto-render a preview for content slides whose diagram has no up-to-date preview
+  // (newly arrived from the LLM, edited by the user, or stale after a structural edit
+  // renumbered slides). Debounced so editing the Mermaid textarea — which updates
+  // `outline` on every keystroke — only triggers the expensive Excalidraw render once
+  // the user pauses, instead of on every character.
+  useEffect(() => {
+    if (!outline) return undefined;
+    const timer = setTimeout(() => {
+      for (const slide of outline.slides) {
+        if (slide.slide_type !== 'content') continue;
+        const mermaid = (slide.diagram || '').trim();
+        if (!mermaid) continue;
+        const preview = diagramPreviews[slide.page_number];
+        if (!preview || preview.source !== mermaid) {
+          renderDiagramPreview(slide.page_number, mermaid);
+        }
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outline]);
 
   if (!outline) {
     return (
@@ -98,6 +145,13 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
     const updated = { ...outline };
     updated.slides = [...updated.slides];
     updated.slides[slideIndex] = { ...updated.slides[slideIndex], image_url: imageUrl || undefined };
+    onOutlineChange(updated);
+  };
+
+  const updateSlideDiagram = (slideIndex, diagram) => {
+    const updated = { ...outline };
+    updated.slides = [...updated.slides];
+    updated.slides[slideIndex] = { ...updated.slides[slideIndex], diagram: diagram || undefined };
     onOutlineChange(updated);
   };
 
@@ -260,6 +314,52 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
                       </button>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* Optional hand-drawn diagram (Mermaid) for content slide */}
+              {slide.slide_type === 'content' && (
+                <div className="mt-4 border-t border-white/5 pt-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-bashi-text-secondary">手绘图示 Diagram (Mermaid)</span>
+                    <button
+                      type="button"
+                      onClick={() => renderDiagramPreview(slide.page_number, slide.diagram)}
+                      disabled={!(slide.diagram || '').trim()}
+                      className="rounded-full border border-white/10 px-3.5 py-1.5 text-xs text-bashi-text-secondary transition hover:border-bashi-border-focus hover:text-bashi-text disabled:opacity-40"
+                    >
+                      预览 Preview
+                    </button>
+                  </div>
+                  <textarea
+                    value={slide.diagram || ''}
+                    onChange={(event) => updateSlideDiagram(slideIndex, event.target.value)}
+                    placeholder="flowchart LR; A[输入] --> B[处理] --> C[输出]"
+                    rows={3}
+                    className="bashi-input mt-2 w-full rounded-2xl px-4 py-2.5 font-mono text-xs"
+                  />
+                  {slide.image_url && (slide.diagram || '').trim() && (
+                    <p className="mt-2 text-xs text-amber-200/80">
+                      该页已有配图，导出时将优先使用配图，图示不会显示。
+                    </p>
+                  )}
+                  {(() => {
+                    const preview = diagramPreviews[slide.page_number];
+                    // Only trust a preview rendered from the slide's current Mermaid;
+                    // a mismatch means it's stale and the effect will re-render it.
+                    if (!preview || preview.source !== (slide.diagram || '').trim()) return null;
+                    if (preview.status === 'loading') {
+                      return <p className="mt-2 text-xs text-bashi-text-muted">渲染中…</p>;
+                    }
+                    if (preview.status === 'error') {
+                      return <p className="mt-2 text-xs text-red-200">Mermaid 语法有误，无法渲染。</p>;
+                    }
+                    return (
+                      <div className="mt-2 overflow-hidden rounded-xl border border-white/10 bg-white p-2">
+                        <img src={preview.url} alt="Diagram preview" className="mx-auto max-h-48 object-contain" />
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>

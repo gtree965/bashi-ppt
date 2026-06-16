@@ -204,6 +204,35 @@ class PPTXRenderer:
             logger.error(f"Failed to download image {url}: {e}")
             return None
 
+    def _decode_data_url(self, data_url: str) -> str | None:
+        """Decode a base64 image data-URL to a temporary PNG file, returning the path.
+
+        Used for hand-drawn diagrams rendered in the browser and sent as
+        ``data:image/png;base64,...``. ``_download_image`` cannot handle these
+        because it speaks urllib/HTTP, not data URLs.
+        """
+        import base64
+        import tempfile
+
+        try:
+            payload = data_url
+            if payload.startswith("data:"):
+                # Strip the "data:image/png;base64," prefix.
+                _, _, payload = payload.partition(",")
+            if not payload:
+                return None
+
+            image_bytes = base64.b64decode(payload)
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+            try:
+                temp_file.write(image_bytes)
+            finally:
+                temp_file.close()
+            return temp_file.name
+        except Exception as e:
+            logger.error(f"Failed to decode diagram data-URL: {e}")
+            return None
+
     def _render_content_slide(self, prs, slide_data: dict, layout_id: str, current: int, total: int, bullet_style: str = "dot"):
         slide = self._create_blank_slide(prs)
         layout = LAYOUTS.get(layout_id, LAYOUTS["ContentBulletLayout"])
@@ -231,15 +260,19 @@ class PPTXRenderer:
         bullet_prefix = bullet_prefixes.get(bullet_style, "•  ")
         bulleted_points = [f"{bullet_prefix}{pt}" if pt else pt for pt in points]
         
-        # Check if slide has image
+        # Check if slide has a graphic. A search image takes precedence over a
+        # rendered diagram, since the right column only holds one graphic.
         image_url = slide_data.get("image_url")
+        diagram_image = slide_data.get("diagram_image")
         temp_img_path = None
         has_image = False
-        
+
         if image_url:
             temp_img_path = self._download_image(image_url)
-            if temp_img_path:
-                has_image = True
+        elif diagram_image:
+            temp_img_path = self._decode_data_url(diagram_image)
+        if temp_img_path:
+            has_image = True
                 
         if has_image:
             # Side-by-side coordinates

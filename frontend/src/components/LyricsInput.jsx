@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 
 const SAMPLE_LYRICS = `奇异恩典，何等甘甜，
 我罪已得赦免！
@@ -58,38 +58,25 @@ export default function LyricsInput({ onPreview, onGenerate, isLoading, config }
     ? (limits.single_extended || limits.single)
     : limits[languageMode];
 
-  // Adjust linesPerSlide when mode changes
-  useEffect(() => {
-    if (linesPerSlide > currentLimits.max_lines) {
-      setLinesPerSlide(currentLimits.default_lines);
-    }
-    if (linesPerSlide < currentLimits.min_lines) {
-      setLinesPerSlide(currentLimits.default_lines);
-    }
-  }, [currentLimits, linesPerSlide]);
-
-  useEffect(() => {
-    if (languageMode !== 'bilingual' || secondaryLang !== primaryLang) {
-      return;
-    }
-
+  // Keep dependent selections valid when the mode/language changes. Done during
+  // render (React's "adjust state when a prop changes" pattern) instead of in
+  // effects, which would trigger cascading renders. Each branch is guarded so it
+  // only fires when a value is actually out of sync (no render loop).
+  if (linesPerSlide > currentLimits.max_lines || linesPerSlide < currentLimits.min_lines) {
+    setLinesPerSlide(currentLimits.default_lines);
+  }
+  if (languageMode === 'bilingual' && secondaryLang === primaryLang) {
     const fallbackSecondary = languages.find((lang) => lang.code !== primaryLang)?.code;
     if (fallbackSecondary) {
       setSecondaryLang(fallbackSecondary);
     }
-  }, [languageMode, primaryLang, secondaryLang, languages]);
-
-  useEffect(() => {
-    if (languageMode !== 'single' || primaryLang !== 'zh') {
-      setChineseScriptMode('original');
-    }
-  }, [languageMode, primaryLang]);
-
-  useEffect(() => {
-    if (languageMode !== 'single' && extendedSingleLines) {
-      setExtendedSingleLines(false);
-    }
-  }, [languageMode, extendedSingleLines]);
+  }
+  if ((languageMode !== 'single' || primaryLang !== 'zh') && chineseScriptMode !== 'original') {
+    setChineseScriptMode('original');
+  }
+  if (languageMode !== 'single' && extendedSingleLines) {
+    setExtendedSingleLines(false);
+  }
 
   const buildPayload = () => ({
     lyrics,

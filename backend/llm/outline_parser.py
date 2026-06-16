@@ -187,14 +187,22 @@ def _normalize_outline(outline: dict[str, Any]) -> ParsedOutlineResult:
             normalized_points = normalized_points[:max_points]
             warnings.append(f"Trimmed extra content points on slide {index + 1}")
 
-        normalized_slides.append(
-            {
-                "page_number": index + 1,
-                "title": slide_title,
-                "content_points": normalized_points,
-                "slide_type": slide_type,
-            }
-        )
+        normalized_slide = {
+            "page_number": index + 1,
+            "title": slide_title,
+            "content_points": normalized_points,
+            "slide_type": slide_type,
+        }
+
+        # Preserve an optional LLM-suggested Mermaid diagram on content slides.
+        # The rest of the slide dict is rebuilt from scratch above, so any field
+        # not copied here is silently dropped (this is why image_url, added later
+        # client-side, never survives the parser — and why diagram must be copied).
+        diagram = slide.get("diagram")
+        if isinstance(diagram, str) and diagram.strip() and slide_type == "content":
+            normalized_slide["diagram"] = diagram.strip()
+
+        normalized_slides.append(normalized_slide)
 
     normalized_outline = {
         "title": title,

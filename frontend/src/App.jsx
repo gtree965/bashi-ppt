@@ -7,6 +7,7 @@ import GenerateButton from './components/GenerateButton';
 import HymnStudio from './components/HymnStudio';
 import LLMSettings from './components/LLMSettings';
 import { generateOutline, generatePptx } from './api/client';
+import { mermaidToPngDataUrl } from './utils/diagramRenderer';
 
 const STEPS = {
   IDLE: 'idle',
@@ -71,11 +72,31 @@ function App() {
     }
   };
 
+  // Render every content slide's Mermaid diagram to a fresh PNG right before export,
+  // so the embedded image always matches the current `diagram` text (no stale cache).
+  // A search image takes precedence over a diagram (the slide's right column holds
+  // only one graphic), so we clear diagram_image when image_url is present.
+  const ensureDiagramImages = async (sourceOutline) => {
+    const slides = await Promise.all(
+      sourceOutline.slides.map(async (slide) => {
+        if (slide.slide_type !== 'content') return slide;
+        const mermaid = (slide.diagram || '').trim();
+        if (!mermaid || slide.image_url) {
+          return slide.diagram_image ? { ...slide, diagram_image: undefined } : slide;
+        }
+        const dataUrl = await mermaidToPngDataUrl(mermaid);
+        return { ...slide, diagram_image: dataUrl || undefined };
+      })
+    );
+    return { ...sourceOutline, slides };
+  };
+
   const handleGeneratePptx = async () => {
     setStep(STEPS.GENERATING_PPTX);
     setError(null);
     try {
-      await generatePptx(outline, template, bulletStyle, selectedTheme);
+      const exportOutline = await ensureDiagramImages(outline);
+      await generatePptx(exportOutline, template, bulletStyle, selectedTheme);
       setStep(STEPS.EDITING);
     } catch (err) {
       setError(err.message);

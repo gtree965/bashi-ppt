@@ -34,7 +34,7 @@ const PROVIDER_DEFAULTS = {
   openrouter: "https://openrouter.ai/api/v1",
 };
 
-export default function LLMSettings({ onClose }) {
+export default function LLMSettings() {
   const [provider, setProvider] = useState("lmstudio");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
