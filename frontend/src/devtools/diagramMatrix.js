@@ -8,6 +8,7 @@ import { convertToExcalidrawElements } from '@excalidraw/excalidraw';
 
 const SAMPLES = [
   ['flowchart', 'flowchart TD\n  A[开始] --> B{判断?}\n  B -->|是| C[处理]\n  B -->|否| D[结束]'],
+  ['flowchart-shapes', 'flowchart TD\n  A((开始)) --> B[读取输入]\n  B --> C{数据有效?}\n  C -->|是| D(处理)\n  C -->|否| E([重试])\n  D --> F((结束))'],
   ['sequenceDiagram', 'sequenceDiagram\n  Alice->>Bob: 你好\n  Bob-->>Alice: 回复'],
   ['classDiagram', 'classDiagram\n  Animal <|-- Dog\n  Animal : +String name'],
   ['erDiagram', 'erDiagram\n  CUSTOMER ||--o{ ORDER : places'],
