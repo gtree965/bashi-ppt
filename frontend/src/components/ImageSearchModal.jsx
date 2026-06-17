@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { searchImages } from '../api/client';
 
 export default function ImageSearchModal({ isOpen, onClose, onSelectImage, initialQuery }) {
@@ -42,7 +43,9 @@ export default function ImageSearchModal({ isOpen, onClose, onSelectImage, initi
 
   if (!isOpen) return null;
 
-  return (
+  // Render via a portal to <body> so the fixed overlay isn't trapped by an ancestor
+  // with backdrop-filter (.bashi-card), which would otherwise anchor it mid-page.
+  return createPortal(
     <>
       {/* Backdrop */}
       <div 
@@ -146,6 +149,7 @@ export default function ImageSearchModal({ isOpen, onClose, onSelectImage, initi
           </div>
         </div>
       </div>
-    </>
+    </>,
+    document.body
   );
 }
