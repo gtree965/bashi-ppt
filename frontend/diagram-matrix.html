@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Diagram bridge matrix (dev)</title>
+    <script>
+      window.EXCALIDRAW_ASSET_PATH = '/';
+    </script>
+    <style>
+      body { font-family: system-ui, sans-serif; padding: 24px; color: #222; }
+      table { border-collapse: collapse; margin-top: 12px; }
+      th, td { border: 1px solid #ccc; padding: 6px 12px; text-align: left; vertical-align: top; }
+      th { background: #f4f4f4; }
+      code { font-size: 12px; }
+      .legend { font-size: 14px; color: #555; }
+    </style>
+  </head>
+  <body>
+    <h1>mermaid-to-excalidraw runtime matrix</h1>
+    <p class="legend">
+      <b style="color:#137333">hand-drawn</b> = native Excalidraw shapes (wobbly) ·
+      <b style="color:#b06000">image-fallback</b> = flat Mermaid SVG ·
+      <b style="color:#b00020">error</b> = converter threw
+    </p>
+    <table>
+      <thead>
+        <tr><th>Mermaid type</th><th>Result</th><th>Element breakdown</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <script type="module" src="/src/devtools/diagramMatrix.js"></script>
+  </body>
+</html>
