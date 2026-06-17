@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import ImageSearchModal from './ImageSearchModal';
 import { mermaidToPngDataUrl } from '../utils/diagramRenderer';
+import { buildMermaid, DIAGRAM_KINDS } from '../utils/diagramTemplates';
 
 const SLIDE_TYPE_STYLES = {
   title: 'border-[#d4a373] bg-[rgba(212,163,115,0.08)]',
@@ -13,24 +14,6 @@ const SLIDE_TYPE_LABELS = {
   content: '内容页',
   conclusion: '总结页',
 };
-
-// Build a top-down Mermaid flowchart from a plain list of steps (one per line),
-// so users can type "数据输入 / 统计模型 / 特征提取" instead of Mermaid syntax.
-function stepsToMermaid(stepsText) {
-  const lines = (stepsText || '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length === 0) return '';
-  // Double quotes would break the quoted label; swap for safe single quotes.
-  const node = (i) => `n${i}["${lines[i].replace(/"/g, "'")}"]`;
-  if (lines.length === 1) return `flowchart TD\n  ${node(0)}`;
-  let body = '';
-  for (let i = 0; i < lines.length - 1; i++) {
-    body += `  ${node(i)} --> ${node(i + 1)}\n`;
-  }
-  return `flowchart TD\n${body}`.trimEnd();
-}
 
 const SLIDE_CONSTRAINTS = {
   title: {
@@ -171,40 +154,61 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
     onOutlineChange(updated);
   };
 
-  const updateSlideDiagram = (slideIndex, diagram) => {
+  const patchSlide = (slideIndex, patch) => {
     const updated = { ...outline };
     updated.slides = [...updated.slides];
-    // Editing raw Mermaid makes any stored steps stale, so drop them — otherwise a
-    // remount would default back to simple mode and show/overwrite outdated steps.
-    updated.slides[slideIndex] = {
-      ...updated.slides[slideIndex],
-      diagram: diagram || undefined,
-      diagram_steps: undefined,
-    };
+    updated.slides[slideIndex] = { ...updated.slides[slideIndex], ...patch };
     onOutlineChange(updated);
   };
 
-  // Simple mode: store the user's raw step lines and (re)derive the Mermaid from them.
+  const updateSlideDiagram = (slideIndex, diagram) => {
+    // Editing raw Mermaid makes any stored steps/template stale, so drop them —
+    // otherwise a remount would default back to simple mode and overwrite the Mermaid.
+    patchSlide(slideIndex, {
+      diagram: diagram || undefined,
+      diagram_steps: undefined,
+      diagram_kind: undefined,
+      diagram_layout: undefined,
+    });
+  };
+
+  // Simple mode: store the user's raw step lines and (re)derive Mermaid from them,
+  // honoring the slide's chosen template kind and layout.
   const updateSlideDiagramSteps = (slideIndex, stepsText) => {
-    const updated = { ...outline };
-    updated.slides = [...updated.slides];
-    updated.slides[slideIndex] = {
-      ...updated.slides[slideIndex],
+    const slide = outline.slides[slideIndex];
+    const kind = slide.diagram_kind || 'flow';
+    const layout = slide.diagram_layout || 'TD';
+    patchSlide(slideIndex, {
       diagram_steps: stepsText || undefined,
-      diagram: stepsToMermaid(stepsText) || undefined,
-    };
-    onOutlineChange(updated);
+      diagram: buildMermaid(kind, stepsText, layout) || undefined,
+    });
+  };
+
+  const setDiagramKind = (slideIndex, kind) => {
+    const slide = outline.slides[slideIndex];
+    const layout = slide.diagram_layout || 'TD';
+    patchSlide(slideIndex, {
+      diagram_kind: kind,
+      diagram: buildMermaid(kind, slide.diagram_steps || '', layout) || undefined,
+    });
+  };
+
+  const setDiagramLayout = (slideIndex, layout) => {
+    const slide = outline.slides[slideIndex];
+    const kind = slide.diagram_kind || 'flow';
+    patchSlide(slideIndex, {
+      diagram_layout: layout,
+      diagram: buildMermaid(kind, slide.diagram_steps || '', layout) || undefined,
+    });
   };
 
   const clearSlideDiagram = (slideIndex, pageNumber) => {
-    const updated = { ...outline };
-    updated.slides = [...updated.slides];
-    updated.slides[slideIndex] = {
-      ...updated.slides[slideIndex],
+    patchSlide(slideIndex, {
       diagram: undefined,
       diagram_steps: undefined,
-    };
-    onOutlineChange(updated);
+      diagram_kind: undefined,
+      diagram_layout: undefined,
+    });
     setOpenDiagrams((prev) => {
       const next = new Set(prev);
       next.delete(pageNumber);
@@ -406,6 +410,9 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
                 // LLM-supplied diagrams arrive as Mermaid (no steps) → default to advanced.
                 const mode = diagramModes[pageNumber] ?? (slide.diagram && !slide.diagram_steps ? 'advanced' : 'simple');
                 const preview = diagramPreviews[pageNumber];
+                const kind = slide.diagram_kind || 'flow';
+                const layout = slide.diagram_layout || 'TD';
+                const kindMeta = DIAGRAM_KINDS.find((k) => k.id === kind) || DIAGRAM_KINDS[0];
 
                 return (
                   <div className="mt-4 border-t border-white/5 pt-4">
@@ -440,16 +447,42 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
 
                     {mode === 'simple' ? (
                       <>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <div className="inline-flex flex-wrap rounded-full border border-white/10 p-0.5 text-xs">
+                            {DIAGRAM_KINDS.map((k) => (
+                              <button
+                                key={k.id}
+                                type="button"
+                                onClick={() => setDiagramKind(slideIndex, k.id)}
+                                className={`rounded-full px-2.5 py-1 transition ${kind === k.id ? 'bg-bashi-copper/20 text-bashi-copper' : 'text-bashi-text-muted hover:text-bashi-text-secondary'}`}
+                              >
+                                {k.label}
+                              </button>
+                            ))}
+                          </div>
+                          {kindMeta.hasLayout && (
+                            <div className="inline-flex rounded-full border border-white/10 p-0.5 text-xs">
+                              {['TD', 'LR'].map((lay) => (
+                                <button
+                                  key={lay}
+                                  type="button"
+                                  onClick={() => setDiagramLayout(slideIndex, lay)}
+                                  className={`rounded-full px-2.5 py-1 transition ${layout === lay ? 'bg-bashi-copper/20 text-bashi-copper' : 'text-bashi-text-muted hover:text-bashi-text-secondary'}`}
+                                >
+                                  {lay === 'TD' ? '竖向' : '横向'}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                         <textarea
                           value={slide.diagram_steps || ''}
                           onChange={(event) => updateSlideDiagramSteps(slideIndex, event.target.value)}
-                          placeholder={'每行一个步骤，自动生成流程图：\n数据输入\n统计模型\n特征提取\n分类结果'}
+                          placeholder={kindMeta.placeholder}
                           rows={4}
                           className="bashi-input mt-2 w-full rounded-2xl px-4 py-2.5 text-sm"
                         />
-                        <p className="mt-1 text-xs text-bashi-text-muted">
-                          每行一个步骤，按顺序自动连成自上而下的流程图。
-                        </p>
+                        <p className="mt-1 text-xs text-bashi-text-muted">{kindMeta.hint}</p>
                         {slide.diagram && !slide.diagram_steps && (
                           <p className="mt-1 text-xs text-amber-200/80">
                             当前图示为 Mermaid 代码；在此输入步骤会将其替换。
