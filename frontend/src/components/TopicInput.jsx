@@ -50,6 +50,10 @@ export default function TopicInput({ onSubmit, isLoading }) {
     return () => window.clearInterval(intervalId);
   }, [isLoading]);
 
+  // When both a topic and reference article are provided, the draft-article step is
+  // hidden (the user already has source material), so never trigger it in that case.
+  const bothProvided = topic.trim() !== '' && referenceText.trim() !== '';
+
   const handleSubmit = (event) => {
     event.preventDefault();
     if (!topic.trim() && !referenceText.trim()) return;
@@ -60,7 +64,7 @@ export default function TopicInput({ onSubmit, isLoading }) {
       numSlides,
       scenario,
       language,
-      draftFirst,
+      draftFirst: bothProvided ? false : draftFirst,
     });
   };
 
@@ -197,21 +201,23 @@ export default function TopicInput({ onSubmit, isLoading }) {
       </div>
 
       <div className="mt-8 space-y-4">
-        <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-bashi-border bg-black/20 px-4 py-3 text-sm text-bashi-text-secondary">
-          <input
-            type="checkbox"
-            checked={draftFirst}
-            onChange={(event) => setDraftFirst(event.target.checked)}
-            disabled={isLoading}
-            className="mt-0.5 accent-bashi-copper"
-          />
-          <span>
-            先生成参考文章，确认后再生成大纲
-            <span className="mt-0.5 block text-xs text-bashi-text-muted">
-              Draft an article first, then the outline — lets you review/correct the direction before the PPT.
+        {!bothProvided && (
+          <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-bashi-border bg-black/20 px-4 py-3 text-sm text-bashi-text-secondary">
+            <input
+              type="checkbox"
+              checked={draftFirst}
+              onChange={(event) => setDraftFirst(event.target.checked)}
+              disabled={isLoading}
+              className="mt-0.5 accent-bashi-copper"
+            />
+            <span>
+              先生成参考文章，确认后再生成大纲
+              <span className="mt-0.5 block text-xs text-bashi-text-muted">
+                Draft an article first, then the outline — lets you review/correct the direction before the PPT.
+              </span>
             </span>
-          </span>
-        </label>
+          </label>
+        )}
 
         <button
           type="submit"
@@ -219,8 +225,8 @@ export default function TopicInput({ onSubmit, isLoading }) {
           className="bashi-btn-primary w-full rounded-2xl px-6 py-4 text-lg font-semibold"
         >
           {isLoading
-            ? (draftFirst ? '正在生成文章...' : '正在生成大纲...')
-            : (draftFirst ? '生成参考文章 Draft Article' : '生成大纲 Generate Outline')}
+            ? (draftFirst && !bothProvided ? '正在生成文章...' : '正在生成大纲...')
+            : (draftFirst && !bothProvided ? '生成参考文章 Draft Article' : '生成大纲 Generate Outline')}
         </button>
 
         {isLoading && (
