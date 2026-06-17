@@ -50,9 +50,10 @@ export default function TopicInput({ onSubmit, isLoading }) {
     return () => window.clearInterval(intervalId);
   }, [isLoading]);
 
-  // When both a topic and reference article are provided, the draft-article step is
-  // hidden (the user already has source material), so never trigger it in that case.
-  const bothProvided = topic.trim() !== '' && referenceText.trim() !== '';
+  // The draft-article step only makes sense for topic-only input (AI invents an
+  // article to review). If any reference text is present the user already has source
+  // material, so the toggle is hidden and draft-first is never triggered.
+  const showDraftToggle = topic.trim() !== '' && referenceText.trim() === '';
 
   const handleSubmit = (event) => {
     event.preventDefault();
@@ -64,7 +65,7 @@ export default function TopicInput({ onSubmit, isLoading }) {
       numSlides,
       scenario,
       language,
-      draftFirst: bothProvided ? false : draftFirst,
+      draftFirst: showDraftToggle ? draftFirst : false,
     });
   };
 
@@ -201,7 +202,7 @@ export default function TopicInput({ onSubmit, isLoading }) {
       </div>
 
       <div className="mt-8 space-y-4">
-        {!bothProvided && (
+        {showDraftToggle && (
           <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-bashi-border bg-black/20 px-4 py-3 text-sm text-bashi-text-secondary">
             <input
               type="checkbox"
@@ -225,8 +226,8 @@ export default function TopicInput({ onSubmit, isLoading }) {
           className="bashi-btn-primary w-full rounded-2xl px-6 py-4 text-lg font-semibold"
         >
           {isLoading
-            ? (draftFirst && !bothProvided ? '正在生成文章...' : '正在生成大纲...')
-            : (draftFirst && !bothProvided ? '生成参考文章 Draft Article' : '生成大纲 Generate Outline')}
+            ? (draftFirst && showDraftToggle ? '正在生成文章...' : '正在生成大纲...')
+            : (draftFirst && showDraftToggle ? '生成参考文章 Draft Article' : '生成大纲 Generate Outline')}
         </button>
 
         {isLoading && (
