@@ -42,10 +42,11 @@ the parser; `/api/generate-pptx` renders the raw dict without re-validation.
 ## 2. What Is DONE (implemented, tested — do not redo)
 
 ### Backend
-- **`backend/schema.py`** — `SlideData` now has optional `diagram: Optional[str]` (Mermaid),
-  `diagram_steps: Optional[str]` (the user's raw step lines; UI builds `diagram` from these),
-  and `diagram_image: Optional[str]` (base64 data-URL of the rendered diagram). All client-set
-  except `diagram`, which the LLM may supply.
+- **`backend/schema.py`** — `SlideData` optional diagram fields: `diagram` (Mermaid),
+  `diagram_steps` (user's raw step lines), `diagram_kind` (`flow|decision|cycle|sequence`),
+  `diagram_layout` (`TD|LR`), and `diagram_image` (base64 data-URL of the rendered diagram).
+  All are client-set except `diagram`, which the LLM may supply. `diagram_kind`/`diagram_layout`
+  are UI-only (the renderer ignores them; it only consumes `diagram`/`diagram_image`).
 - **`backend/llm/outline_parser.py`** — `_normalize_outline` copies a non-empty `diagram`
   through **on content slides only**; `chart_config`/`image_config`/`description`/`type`
   still stripped. `diagram` is intentionally NOT in `FORBIDDEN_FIELDS`.
@@ -63,26 +64,30 @@ the parser; `/api/generate-pptx` renders the raw dict without re-validation.
 - Deps added: `@excalidraw/excalidraw@0.18.1`, `@excalidraw/mermaid-to-excalidraw@2.2.2`.
   (Installed with `--strict-ssl=false` due to the network's SSL interception.)
 - **`frontend/src/utils/diagramRenderer.js`** (new) — `mermaidToPngDataUrl(mermaid)`:
+  dynamically `import()`s the diagram libs (lazy chunk), then
   `parseMermaidToExcalidraw` → `convertToExcalidrawElements` → `exportToBlob` → data-URL.
   Runs **headless** (no `<Excalidraw>` component mount), so React 19 incompatibility of the
-  component is irrelevant. Returns `null` on invalid Mermaid (recoverable).
+  component is irrelevant. Passes the parser's `files` through to `exportToBlob` so image-
+  fallback Mermaid types still render. Returns `null` on invalid Mermaid (recoverable).
+- **`frontend/src/utils/diagramTemplates.js`** (new) — `buildMermaid(kind, stepsText, layout)`
+  turns plain step lines into Mermaid so non-technical users avoid syntax. `DIAGRAM_KINDS`
+  drives the UI. Kinds: **flow** (smart auto-shapes: first/last → circles, a line ending in
+  `?`/`？` → decision diamond, else rectangles), **decision** (line 1 = question diamond, rest
+  = labeled `是/否` branches), **cycle** (circle nodes looping back to step 1), **sequence**
+  (`A -> B: msg` → `sequenceDiagram`). Only flowchart + sequence are emitted because those are
+  the only types the bridge renders as true hand-drawn shapes (see harness below).
 - **`frontend/src/components/OutlineEditor.jsx`** — diagram editing on content slides:
-  - **Collapsed by default**: shows a `📈 + 添加图示` button until the slide has a diagram or
-    the user opens one (`openDiagrams` set, keyed by `page_number`). A **删除** button clears
-    the diagram and collapses again. (Note: clearing the textarea alone does not auto-collapse;
-    only 删除 does.)
+  - **Collapsed by default**: a `📈 + 添加图示` button until the slide has a diagram or the user
+    opens one (`openDiagrams` set, keyed by `page_number`); a **删除** button clears + collapses.
   - **Two input modes** (`diagramModes` per `page_number`): **步骤/Steps** (default for
-    user-created) — a textarea of one step per line stored in `diagram_steps`, from which
-    `stepsToMermaid()` builds a top-down `flowchart TD` into `diagram`; and **Mermaid**
-    (advanced, default for LLM-supplied diagrams which have `diagram` but no `diagram_steps`)
-    — raw Mermaid editing via `updateSlideDiagram`, which **clears `diagram_steps`** so the
-    two never go stale relative to each other.
+    user-created) — a template picker (流程/决策/循环/时序) + 竖向/横向 (TD/LR) toggle; the
+    textarea holds `diagram_steps`, and `buildMermaid(diagram_kind, steps, diagram_layout)`
+    rebuilds `diagram`. **Mermaid** (advanced, default for LLM-supplied diagrams) edits raw
+    `diagram` via `updateSlideDiagram`, which **clears** `diagram_steps`/`diagram_kind`/
+    `diagram_layout` so the representations never diverge.
   - **No manual preview button** — a **debounced** (600 ms) `useEffect` auto-renders any
-    content slide whose `diagram` lacks an up-to-date preview (LLM-supplied, edited, or stale
-    after a renumber), so the preview just appears shortly after typing stops. Previews live
-    in `diagramPreviews` keyed by `page_number`, each tagged with the `source` Mermaid it was
-    rendered from so renumbering/edits self-correct; the displayed image is suppressed unless
-    its `source` matches the slide's current `diagram`.
+    content slide whose `diagram` lacks an up-to-date preview, source-tagged in
+    `diagramPreviews` so renumbering/edits self-correct (a mismatched preview is suppressed).
   - An inline amber note warns when a search image will take precedence over the diagram.
 - **`frontend/src/App.jsx`** — `ensureDiagramImages(outline)` renders a **fresh** PNG for each
   content slide's `diagram` right before `generatePptx` (avoids stale images) and clears
@@ -96,7 +101,17 @@ the parser; `/api/generate-pptx` renders the raw dict without re-validation.
     (234 woff2, ~12.5 MB incl. CJK Xiaolai needed for Chinese labels). Verified that
     `dist/fonts/Virgil/Virgil-Regular.woff2` etc. match the runtime requests off base `/`.
 
+### Dev tools
+- **`frontend/diagram-matrix.html`** + **`frontend/src/devtools/diagramMatrix.js`** — a dev-only
+  harness (not in the production build). Under `npm run dev`, open `/diagram-matrix.html` to run
+  each Mermaid type through the bridge and classify it **hand-drawn** vs **image-fallback** vs
+  **error**. Runtime-verified result: only **flowchart** (incl. circles/diamonds/labeled
+  branches) and **sequenceDiagram** render as native hand-drawn shapes; class/ER/state/mindmap/
+  gantt/pie/etc. fall back to a flat image. (The source dispatch lists class/ER/state converters,
+  but they throw at runtime and fall back — hence verifying empirically.)
+
 ### Tests
+
 - **`tests/test_diagrams.py`** (new): parser preserves `diagram` on content + strips it on
   title/conclusion + still removes `chart_config`; engine embeds `diagram_image` as one
   picture; `image_url` precedence (diagram not used when image present).
@@ -132,7 +147,7 @@ Each is independent and well-bounded. Pick any.
 Implemented: `frontend/src/utils/diagramRenderer.js` now dynamically `import()`s
 `@excalidraw/excalidraw` and `@excalidraw/mermaid-to-excalidraw` inside
 `mermaidToPngDataUrl` (same async signature, so `OutlineEditor.jsx` / `App.jsx` are
-unchanged). Result: the main bundle dropped from **~1,468 KB → ~236 KB**; Excalidraw
+unchanged). Result: the main bundle dropped from **~1,468 KB → ~240 KB**; Excalidraw
 (~1.78 MB) and mermaid now load as separate async chunks only when a diagram is first
 rendered. Offline font copy is unaffected (still set in index.html + copied to dist/fonts).
 
@@ -177,9 +192,12 @@ frontend/package.json            (+ package-lock.json)
 frontend/index.html              (sets window.EXCALIDRAW_ASSET_PATH)
 frontend/vite.config.js
 frontend/src/main.jsx
-frontend/src/utils/diagramRenderer.js   (new)
+frontend/src/utils/diagramRenderer.js   (new; lazy-loads libs, passes files through)
+frontend/src/utils/diagramTemplates.js  (new; buildMermaid + DIAGRAM_KINDS)
 frontend/src/components/OutlineEditor.jsx
 frontend/src/App.jsx
+frontend/diagram-matrix.html            (new; dev-only harness)
+frontend/src/devtools/diagramMatrix.js  (new; dev-only harness)
 tests/test_diagrams.py           (new)
 frontend/dist/**                 (rebuilt; includes dist/fonts/**)
 

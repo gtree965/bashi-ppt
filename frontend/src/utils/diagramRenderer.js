@@ -36,13 +36,16 @@ export async function mermaidToPngDataUrl(mermaid) {
         import('@excalidraw/excalidraw'),
       ]);
 
-    const { elements } = await parseMermaidToExcalidraw(source);
+    // `files` carries the embedded image for Mermaid types that fall back to an SVG
+    // (anything other than flowchart/sequence). Native templates leave it empty, but
+    // advanced-mode users can write a fallback type — pass it through so it still renders.
+    const { elements, files } = await parseMermaidToExcalidraw(source);
     const excalidrawElements = convertToExcalidrawElements(elements);
     if (!excalidrawElements.length) return null;
 
     const blob = await exportToBlob({
       elements: excalidrawElements,
-      files: null,
+      files: files ?? null,
       mimeType: 'image/png',
       exportPadding: 16,
       appState: {
