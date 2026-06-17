@@ -12,7 +12,7 @@ import httpx
 from openai import APIConnectionError, APIError, APITimeoutError, BadRequestError, OpenAI
 
 import config  # import the module, not its names, so hot-reload works
-from .prompts import build_messages
+from .prompts import build_messages, build_article_messages
 
 logger = logging.getLogger("slideforge")
 
@@ -151,7 +151,6 @@ def generate_outline_text(
     reference_text: str | None = None,
 ) -> LLMGenerationResult:
     """Generate raw outline text from the configured model."""
-    client = _build_client()
     messages = build_messages(
         topic=topic,
         num_slides=num_slides,
@@ -159,8 +158,32 @@ def generate_outline_text(
         language=language,
         reference_text=reference_text,
     )
+    return _run_chat(messages, use_json_mode=True)
 
-    use_json_mode = True
+
+def generate_article_text(
+    topic: str,
+    scenario: str,
+    language: str,
+    reference_text: str | None = None,
+    prior_article: str | None = None,
+    correction: str | None = None,
+) -> LLMGenerationResult:
+    """Generate a freeform draft article (plain text) for the pre-outline step."""
+    messages = build_article_messages(
+        topic=topic,
+        scenario=scenario,
+        language=language,
+        reference_text=reference_text,
+        prior_article=prior_article,
+        correction=correction,
+    )
+    return _run_chat(messages, use_json_mode=False)
+
+
+def _run_chat(messages: list[dict[str, str]], *, use_json_mode: bool = True) -> LLMGenerationResult:
+    """Run a chat completion with retries, JSON-mode fallback, and reasoning salvage."""
+    client = _build_client()
     last_error: Exception | None = None
 
     for attempt in range(MAX_RETRIES + 1):
@@ -176,11 +199,9 @@ def generate_outline_text(
                 request_kwargs["response_format"] = {"type": "json_object"}
 
             logger.info(
-                "Calling LLM endpoint: model=%s, slides=%s, scenario=%s, language=%s, attempt=%s",
+                "Calling LLM endpoint: model=%s, json_mode=%s, attempt=%s",
                 config.LLM_MODEL,
-                num_slides,
-                scenario,
-                language,
+                use_json_mode,
                 attempt + 1,
             )
             response = client.chat.completions.create(**request_kwargs)

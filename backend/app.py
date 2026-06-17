@@ -37,6 +37,7 @@ from llm.client import (
     LLMUnavailableError,
     OutlineGenerationError,
     check_llm_health,
+    generate_article_text,
     generate_outline_text,
 )
 from llm.outline_parser import OutlineParseError, OutlineValidationError, parse_outline
@@ -246,6 +247,119 @@ def generate_outline():
             "The server encountered an unexpected error while generating the outline.",
             500,
         )
+
+
+def _llm_error_response(exc: Exception):
+    """Map a known LLM exception to a Flask error response, or None if unrecognized."""
+    if isinstance(exc, LLMUnavailableError):
+        return error_response(
+            "LM Studio未连接、未加载模型，或 .env 中的 LLM_MODEL 与当前模型不一致。",
+            "LM Studio is unavailable, no model is loaded, or LLM_MODEL does not match the active model.",
+            503,
+        )
+    if isinstance(exc, LLMTimeoutError):
+        return error_response(
+            "本地模型响应超时，请检查LM Studio是否正在运行并已加载模型。",
+            "The local model timed out. Please check that LM Studio is running and a model is loaded.",
+            504,
+        )
+    if isinstance(exc, LLMReasoningOnlyError):
+        return error_response(
+            "当前模型只返回思考内容，没有输出最终答案。请在LM Studio中关闭思考模式。",
+            "The model returned reasoning only. Disable thinking mode in LM Studio.",
+            502,
+        )
+    if isinstance(exc, OutlineGenerationError):
+        return error_response(
+            f"生成失败 (API 错误): {exc}", f"Generation failed (API error): {exc}", 502
+        )
+    return None
+
+
+def _build_draft_response(payload, prior_article: str | None = None, correction: str | None = None):
+    """Generate a draft article then an outline derived from it (shared by draft/refine)."""
+    try:
+        article_result = generate_article_text(
+            topic=payload.topic,
+            scenario=payload.scenario,
+            language=payload.language,
+            reference_text=payload.reference_text,
+            prior_article=prior_article,
+            correction=correction,
+        )
+        article = article_result.raw_text.strip()
+        if not article:
+            return error_response("模型未生成文章内容，请重试。", "The model returned no article. Please retry.", 502)
+
+        # Outline derived from the article — reuse the existing generator with the
+        # article supplied as reference text (topic still steers intent).
+        outline_result = generate_outline_text(
+            topic=payload.topic,
+            num_slides=payload.num_slides,
+            scenario=payload.scenario,
+            language=payload.language,
+            reference_text=article,
+        )
+        parsed = parse_outline(outline_result.raw_text)
+
+        response = {
+            "success": True,
+            "article": article,
+            "outline": parsed.outline,
+            "elapsed_seconds": round(article_result.elapsed_seconds + outline_result.elapsed_seconds, 1),
+            "llm_model": outline_result.llm_model,
+        }
+        if parsed.warnings:
+            response["warnings"] = parsed.warnings
+        return jsonify(response)
+    except (OutlineParseError, OutlineValidationError) as exc:
+        logger.warning("Invalid outline from article draft: %s", exc)
+        return error_response(
+            "模型根据文章生成的大纲格式无效，请重试。",
+            "The outline generated from the article was invalid. Please retry.",
+            502,
+        )
+    except Exception as exc:  # noqa: BLE001 - map known LLM errors, else 500
+        mapped = _llm_error_response(exc)
+        if mapped is not None:
+            return mapped
+        logger.exception("Unexpected error generating draft: %s", exc)
+        return error_response("生成草稿时出现未知错误。", "Unexpected error while generating the draft.", 500)
+
+
+def _validate_outline_request(data):
+    """Return (payload, None) or (None, error_response)."""
+    if data is None:
+        return None, error_response("请提供JSON数据", "JSON body required", 400)
+    try:
+        return OutlineRequest.model_validate(data), None
+    except ValidationError as exc:
+        message_zh, message_en = format_validation_errors(exc)
+        return None, error_response(message_zh, message_en, 422)
+
+
+@app.route("/api/generate-draft", methods=["POST"])
+def generate_draft():
+    """Generate a draft article + an outline derived from it."""
+    data = request.get_json(silent=True)
+    payload, err = _validate_outline_request(data)
+    if err is not None:
+        return err
+    logger.info("Generating draft: topic='%s', reference_chars=%s", payload.topic, len(payload.reference_text or ""))
+    return _build_draft_response(payload)
+
+
+@app.route("/api/refine-draft", methods=["POST"])
+def refine_draft():
+    """Regenerate the draft article + outline from a prior article and a correction prompt."""
+    data = request.get_json(silent=True)
+    payload, err = _validate_outline_request(data)
+    if err is not None:
+        return err
+    prior_article = (data.get("prior_article") or "").strip() or None
+    correction = (data.get("correction") or "").strip() or None
+    logger.info("Refining draft: topic='%s', has_correction=%s", payload.topic, bool(correction))
+    return _build_draft_response(payload, prior_article=prior_article, correction=correction)
 
 
 @app.route("/api/generate-pptx", methods=["POST"])

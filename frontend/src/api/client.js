@@ -55,6 +55,51 @@ export async function generateOutline(topic, numSlides, scenario, language, refe
   }
 }
 
+async function postWithOutlineTimeout(path, body) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), OUTLINE_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    return await parseJsonResponse(res);
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('本地模型响应超时，请检查LM Studio是否正在运行并已加载模型。');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+// Draft step: generate an article + an outline derived from it.
+export async function generateDraft(topic, numSlides, scenario, language, referenceText = '') {
+  return postWithOutlineTimeout('/generate-draft', {
+    topic,
+    num_slides: numSlides,
+    scenario,
+    language,
+    reference_text: referenceText.trim() || undefined,
+  });
+}
+
+// Refine step: regenerate article + outline from the prior article and a correction.
+export async function refineDraft({ topic, numSlides, scenario, language, referenceText = '', priorArticle, correction }) {
+  return postWithOutlineTimeout('/refine-draft', {
+    topic,
+    num_slides: numSlides,
+    scenario,
+    language,
+    reference_text: referenceText.trim() || undefined,
+    prior_article: priorArticle,
+    correction,
+  });
+}
+
 export async function getLyricsConfig() {
   const res = await fetch(`${API_BASE}/lyrics-config`);
   return await parseJsonResponse(res);

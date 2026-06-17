@@ -2,16 +2,19 @@ import { useState } from 'react';
 import Header from './components/Header';
 import TopicInput from './components/TopicInput';
 import OutlineEditor from './components/OutlineEditor';
+import DraftReview from './components/DraftReview';
 import TemplateSelector from './components/TemplateSelector';
 import GenerateButton from './components/GenerateButton';
 import HymnStudio from './components/HymnStudio';
 import LLMSettings from './components/LLMSettings';
-import { generateOutline, generatePptx } from './api/client';
+import { generateOutline, generateDraft, refineDraft, generatePptx } from './api/client';
 import { mermaidToPngDataUrl } from './utils/diagramRenderer';
 
 const STEPS = {
   IDLE: 'idle',
   GENERATING_OUTLINE: 'generating_outline',
+  DRAFTING: 'drafting',
+  REVIEW: 'review',
   EDITING: 'editing',
   GENERATING_PPTX: 'generating_pptx',
 };
@@ -46,16 +49,42 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [bulletStyle, setBulletStyle] = useState('dot');
   const [selectedTheme, setSelectedTheme] = useState('clean_blue');
+  const [article, setArticle] = useState('');
+  const [draftParams, setDraftParams] = useState(null);
+  const [draftBusy, setDraftBusy] = useState(false);
 
-  const handleTopicSubmit = async ({ topic, numSlides, scenario, language, referenceText }) => {
+  const handleTopicSubmit = async ({ topic, numSlides, scenario, language, referenceText, draftFirst }) => {
     const autoTemplate = TEMPLATE_BY_SCENARIO[scenario] || 'teaching';
     setScenario(scenario);
     setTemplate(autoTemplate);
     setSelectedTheme(THEME_BY_TEMPLATE[autoTemplate] || 'clean_blue');
-    setStep(STEPS.GENERATING_OUTLINE);
     setError(null);
     setWarnings([]);
 
+    // Draft-first path: generate an article, then review before the outline editor.
+    if (draftFirst) {
+      setDraftParams({ topic, numSlides, scenario, language, referenceText });
+      setStep(STEPS.DRAFTING);
+      try {
+        const data = await generateDraft(topic, numSlides, scenario, language, referenceText);
+        if (data.success) {
+          setArticle(data.article || '');
+          setOutline(data.outline);
+          setWarnings(data.warnings || []);
+          setStep(STEPS.REVIEW);
+        } else {
+          setError(data.error || 'Draft generation failed');
+          setStep(STEPS.IDLE);
+        }
+      } catch (err) {
+        setError(err.message);
+        setStep(STEPS.IDLE);
+      }
+      return;
+    }
+
+    // Fast path: straight to outline.
+    setStep(STEPS.GENERATING_OUTLINE);
     try {
       const data = await generateOutline(topic, numSlides, scenario, language, referenceText);
       if (data.success) {
@@ -70,6 +99,31 @@ function App() {
       setError(err.message);
       setStep(STEPS.IDLE);
     }
+  };
+
+  const handleRefineDraft = async (correction) => {
+    if (!draftParams) return;
+    setDraftBusy(true);
+    setError(null);
+    try {
+      const data = await refineDraft({ ...draftParams, priorArticle: article, correction });
+      if (data.success) {
+        setArticle(data.article || '');
+        setOutline(data.outline);
+        setWarnings(data.warnings || []);
+      } else {
+        setError(data.error || 'Draft refinement failed');
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDraftBusy(false);
+    }
+  };
+
+  const handleConfirmDraft = () => {
+    // Phase 2 will generate speaker notes here before proceeding.
+    setStep(STEPS.EDITING);
   };
 
   // Render every content slide's Mermaid diagram to a fresh PNG right before export,
@@ -113,6 +167,9 @@ function App() {
     setTemplate('teaching');
     setBulletStyle('dot');
     setSelectedTheme('clean_blue');
+    setArticle('');
+    setDraftParams(null);
+    setDraftBusy(false);
   };
 
   return (
@@ -199,10 +256,21 @@ function App() {
           <div className="mt-8 space-y-6">
             {mode === MODES.PRESENTATION && (
               <>
-                {(step === STEPS.IDLE || step === STEPS.GENERATING_OUTLINE) && (
+                {(step === STEPS.IDLE || step === STEPS.GENERATING_OUTLINE || step === STEPS.DRAFTING) && (
                   <TopicInput
                     onSubmit={handleTopicSubmit}
-                    isLoading={step === STEPS.GENERATING_OUTLINE}
+                    isLoading={step === STEPS.GENERATING_OUTLINE || step === STEPS.DRAFTING}
+                  />
+                )}
+
+                {step === STEPS.REVIEW && (
+                  <DraftReview
+                    article={article}
+                    onArticleChange={setArticle}
+                    outline={outline}
+                    onRefine={handleRefineDraft}
+                    onConfirm={handleConfirmDraft}
+                    isBusy={draftBusy}
                   />
                 )}
 

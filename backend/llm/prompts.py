@@ -91,6 +91,77 @@ def build_user_prompt(
     return prompt
 
 
+def build_article_system_prompt(scenario: str, language: str) -> str:
+    """System prompt for the draft-article step (plain prose, not JSON)."""
+    scenario_hint = SCENARIO_HINTS.get(scenario, SCENARIO_HINTS["general"])
+    language_hint = LANGUAGE_HINTS.get(language, LANGUAGE_HINTS["zh"])
+    return (
+        "你是巴适PPT的内容助手，负责在生成PPT大纲之前，先撰写一篇简洁、结构清晰的参考文章/讲稿草稿。\n"
+        "要求：\n"
+        "1. 输出纯文本文章，可用简单的小标题和段落，不要输出JSON、不要输出PPT大纲格式。\n"
+        "2. 结构清楚：有引入、主体若干要点、结尾小结，便于后续转成演示文稿。\n"
+        "3. 篇幅适中（约300-600字），语言自然，重点突出，不要冗长堆砌。\n"
+        f"4. 场景：{scenario_hint}\n"
+        f"5. 语言：{language_hint}\n"
+    )
+
+
+def build_article_user_prompt(
+    topic: str,
+    reference_text: str | None = None,
+    prior_article: str | None = None,
+    correction: str | None = None,
+) -> str:
+    """User prompt for the article step, covering topic-only / reference-only / both,
+    plus an optional refinement round (prior article + a correction instruction)."""
+    topic_clean = topic.strip()
+    reference_excerpt = (reference_text or "").strip()[:REFERENCE_TEXT_PROMPT_LIMIT]
+
+    parts: list[str] = []
+    if topic_clean and reference_excerpt:
+        parts.append(f"主题（主导方向）：{topic_clean}")
+        parts.append(
+            "参考材料（用于约束事实与内容，不要照抄整段，以主题为准组织）：\n" + reference_excerpt
+        )
+    elif reference_excerpt:
+        parts.append(
+            "请根据以下参考材料，提炼并组织成一篇结构清晰的文章。"
+            "只整理材料中已有的信息，不要编造材料中没有的内容：\n" + reference_excerpt
+        )
+    else:
+        parts.append(f"主题：{topic_clean or '请根据上下文自拟一个合适的主题'}")
+
+    if prior_article and correction:
+        parts.append("这是上一版草稿：\n" + prior_article.strip())
+        parts.append("请根据以下修改要求重新撰写文章：\n" + correction.strip())
+
+    parts.append("请直接输出文章正文。")
+    return "\n\n".join(parts)
+
+
+def build_article_messages(
+    topic: str,
+    scenario: str,
+    language: str,
+    reference_text: str | None = None,
+    prior_article: str | None = None,
+    correction: str | None = None,
+) -> list[dict[str, str]]:
+    """Chat messages for the draft-article step."""
+    return [
+        {"role": "system", "content": build_article_system_prompt(scenario, language)},
+        {
+            "role": "user",
+            "content": build_article_user_prompt(
+                topic=topic,
+                reference_text=reference_text,
+                prior_article=prior_article,
+                correction=correction,
+            ),
+        },
+    ]
+
+
 def build_messages(
     topic: str,
     num_slides: int,

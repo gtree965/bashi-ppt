@@ -28,6 +28,7 @@ export default function TopicInput({ onSubmit, isLoading }) {
   const [scenario, setScenario] = useState('teaching');
   const [language, setLanguage] = useState('zh');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [draftFirst, setDraftFirst] = useState(false);
   const [wasLoading, setWasLoading] = useState(isLoading);
 
   // Reset the timer whenever loading starts/stops. Done during render (React's
@@ -59,6 +60,7 @@ export default function TopicInput({ onSubmit, isLoading }) {
       numSlides,
       scenario,
       language,
+      draftFirst,
     });
   };
 
@@ -195,12 +197,30 @@ export default function TopicInput({ onSubmit, isLoading }) {
       </div>
 
       <div className="mt-8 space-y-4">
+        <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-bashi-border bg-black/20 px-4 py-3 text-sm text-bashi-text-secondary">
+          <input
+            type="checkbox"
+            checked={draftFirst}
+            onChange={(event) => setDraftFirst(event.target.checked)}
+            disabled={isLoading}
+            className="mt-0.5 accent-bashi-copper"
+          />
+          <span>
+            先生成参考文章，确认后再生成大纲
+            <span className="mt-0.5 block text-xs text-bashi-text-muted">
+              Draft an article first, then the outline — lets you review/correct the direction before the PPT.
+            </span>
+          </span>
+        </label>
+
         <button
           type="submit"
           disabled={(!topic.trim() && !referenceText.trim()) || isLoading}
           className="bashi-btn-primary w-full rounded-2xl px-6 py-4 text-lg font-semibold"
         >
-          {isLoading ? '正在生成大纲...' : '生成大纲 Generate Outline'}
+          {isLoading
+            ? (draftFirst ? '正在生成文章...' : '正在生成大纲...')
+            : (draftFirst ? '生成参考文章 Draft Article' : '生成大纲 Generate Outline')}
         </button>
 
         {isLoading && (
