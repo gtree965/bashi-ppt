@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 from llm.prompts import build_article_user_prompt, build_article_messages
+from llm.client import _strip_think_tags
 
 
 class TestArticlePrompt(unittest.TestCase):
@@ -35,6 +36,12 @@ class TestArticlePrompt(unittest.TestCase):
     def test_messages_shape(self):
         messages = build_article_messages(topic="X", scenario="teaching", language="zh")
         self.assertEqual([m["role"] for m in messages], ["system", "user"])
+
+    def test_strip_think_tags_recovers_prose(self):
+        # Freeform reasoning salvage: answer follows the closing tag.
+        self.assertEqual(_strip_think_tags("<think>思考...</think>\n文章正文"), "文章正文")
+        # No tags → returned as-is (trimmed).
+        self.assertEqual(_strip_think_tags("  纯文本  "), "纯文本")
 
 
 if __name__ == "__main__":

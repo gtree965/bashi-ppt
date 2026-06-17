@@ -118,6 +118,18 @@ def _extract_text_from_reasoning(reasoning_text: str) -> str | None:
     return None
 
 
+def _strip_think_tags(text: str) -> str:
+    """Recover freeform prose from reasoning_content for non-JSON requests.
+
+    Thinking models may emit a <think>…</think> block; the real answer (if any)
+    follows the last closing tag. Prefer that tail, else just drop the tags.
+    """
+    close = text.rfind("</think>")
+    if close != -1:
+        text = text[close + len("</think>") :]
+    return text.replace("<think>", "").replace("</think>", "").strip()
+
+
 def _model_not_ready(exc: BadRequestError) -> bool:
     message = str(exc).lower()
     return (
@@ -216,17 +228,22 @@ def _run_chat(messages: list[dict[str, str]], *, use_json_mode: bool = True) -> 
 
             if not raw_text:
                 if reasoning_text:
-                    # Qwen3.5 with thinking mode on: the JSON outline often
-                    # ends up inside reasoning_content.  Try to salvage it.
-                    raw_text = _extract_text_from_reasoning(reasoning_text)
+                    if use_json_mode:
+                        # Qwen3.5 with thinking mode on: the JSON outline often
+                        # ends up inside reasoning_content.  Try to salvage the JSON.
+                        raw_text = _extract_text_from_reasoning(reasoning_text)
+                    else:
+                        # Freeform (e.g. article) output has no JSON to extract — fall
+                        # back to the reasoning text itself, stripping any <think> wrapper.
+                        raw_text = _strip_think_tags(reasoning_text)
                     if raw_text:
                         logger.warning(
-                            "content was empty; extracted %s chars from reasoning_content",
+                            "content was empty; recovered %s chars from reasoning_content",
                             len(raw_text),
                         )
                     else:
                         raise LLMReasoningOnlyError(
-                            "The model returned reasoning_content but no usable JSON."
+                            "The model returned reasoning_content but no usable answer."
                         )
                 else:
                     raise OutlineGenerationError("The model returned an empty response.")
