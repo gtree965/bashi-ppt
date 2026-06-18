@@ -69,5 +69,49 @@ class TestNotesRendering(unittest.TestCase):
         self.assertFalse(prs.slides[2].has_notes_slide)
 
 
+class TestNotesEndpoint(unittest.TestCase):
+    def setUp(self):
+        import app
+        self.app_module = app
+        self.client = app.app.test_client()
+
+    def _body(self, **over):
+        body = {"outline": _outline(), "language": "zh", "duration": 10, "style": "classroom"}
+        body.update(over)
+        return body
+
+    def _fake(self, raw):
+        from llm.client import LLMGenerationResult
+        return LLMGenerationResult(raw_text=raw, elapsed_seconds=0.1, llm_model="test")
+
+    def test_success(self):
+        from unittest.mock import patch
+        with patch.object(self.app_module, "generate_speaker_notes", return_value=self._fake('{"notes":["a","b","c"]}')):
+            resp = self.client.post("/api/generate-notes", json=self._body())
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["notes"], ["a", "b", "c"])
+        self.assertNotIn("warnings", data)
+
+    def test_unparseable_returns_502(self):
+        from unittest.mock import patch
+        with patch.object(self.app_module, "generate_speaker_notes", return_value=self._fake("not json")):
+            resp = self.client.post("/api/generate-notes", json=self._body())
+        self.assertEqual(resp.status_code, 502)
+
+    def test_length_mismatch_warns(self):
+        from unittest.mock import patch
+        with patch.object(self.app_module, "generate_speaker_notes", return_value=self._fake('{"notes":["only one"]}')):
+            resp = self.client.post("/api/generate-notes", json=self._body())
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(len(data["notes"]), 3)
+        self.assertTrue(data.get("warnings"))
+
+    def test_invalid_duration_returns_422(self):
+        resp = self.client.post("/api/generate-notes", json=self._body(duration=7))
+        self.assertEqual(resp.status_code, 422)
+
+
 if __name__ == "__main__":
     unittest.main()

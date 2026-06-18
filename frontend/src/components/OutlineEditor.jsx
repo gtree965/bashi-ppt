@@ -60,6 +60,7 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
   const [notesStyle, setNotesStyle] = useState(STYLE_BY_SCENARIO[scenario] || 'formal');
   const [notesBusy, setNotesBusy] = useState(false);
   const [notesError, setNotesError] = useState(null);
+  const [notesNotice, setNotesNotice] = useState(null);
   const [openNotes, setOpenNotes] = useState(() => new Set());
   // Track the latest outline so the async notes result can detect structural changes
   // (add/remove slide) that happened while the LLM was running, and discard if so.
@@ -265,14 +266,17 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
     });
   };
 
-  // Structure signature: changes when a slide is added/removed (or type changes), so
-  // notes generated for one structure are never written onto a different one.
-  const structureSignature = (o) => `${o.slides.length}:${o.slides.map((s) => s.slide_type).join(',')}`;
+  // Signature over exactly the fields the notes prompt consumes (type, title, points).
+  // If any of these change during the async call — add/remove, delete-then-add, or a
+  // title/point edit — the returned notes no longer match and are discarded.
+  const structureSignature = (o) =>
+    JSON.stringify(o.slides.map((s) => [s.slide_type, s.title, s.content_points]));
 
   const handleGenerateNotes = async () => {
     if (notesBusy) return;
     setNotesBusy(true);
     setNotesError(null);
+    setNotesNotice(null);
     const snapshot = structureSignature(outline);
     try {
       const data = await generateSpeakerNotes({
@@ -297,6 +301,9 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
         slides: current.slides.map((slide, index) => ({ ...slide, notes: notes[index] || undefined })),
       });
       setOpenNotes(new Set(current.slides.map((slide) => slide.page_number)));
+      if (data.warnings && data.warnings.length) {
+        setNotesNotice(data.warnings.join(' '));
+      }
     } catch (err) {
       setNotesError(err.message || '讲稿生成请求出错');
     } finally {
@@ -392,6 +399,7 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
           </button>
         </div>
         {notesError && <p className="mt-2 text-xs text-red-200">{notesError}</p>}
+        {notesNotice && <p className="mt-2 text-xs text-amber-200/80">{notesNotice}</p>}
         <p className="mt-2 text-xs text-bashi-text-muted">
           为每页生成可照着讲的讲稿，导出时写入 PowerPoint 备注区；可逐页编辑。
         </p>
