@@ -175,7 +175,7 @@ class GenerateNotesRequest(BaseModel):
     outline: dict
     article: str | None = Field(default=None, max_length=8000)
     language: LanguageType = Field(default="zh")
-    duration: Literal[5, 10, 20] = Field(default=10)
+    duration: Literal[5, 10, 20, 30, 45, 60] = Field(default=10)
     style: Literal["classroom", "sundayschool", "parents", "formal"] = Field(default="formal")
 
 

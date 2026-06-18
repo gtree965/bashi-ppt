@@ -4,7 +4,7 @@ import { mermaidToPngDataUrl } from '../utils/diagramRenderer';
 import { buildMermaid, DIAGRAM_KINDS } from '../utils/diagramTemplates';
 import { generateSpeakerNotes } from '../api/client';
 
-const NOTE_DURATIONS = [5, 10, 20];
+const NOTE_DURATIONS = [5, 10, 20, 30, 45, 60];
 const NOTE_STYLES = [
   { id: 'classroom', label: '课堂讲解' },
   { id: 'sundayschool', label: '主日学' },
