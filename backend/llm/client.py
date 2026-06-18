@@ -12,7 +12,7 @@ import httpx
 from openai import APIConnectionError, APIError, APITimeoutError, BadRequestError, OpenAI
 
 import config  # import the module, not its names, so hot-reload works
-from .prompts import build_messages, build_article_messages
+from .prompts import build_messages, build_article_messages, build_notes_messages
 
 logger = logging.getLogger("slideforge")
 
@@ -71,16 +71,16 @@ def _json_mode_not_supported(exc: BadRequestError) -> bool:
     return "response_format" in message or "json_object" in message or "unsupported" in message
 
 
-def _extract_text_from_reasoning(reasoning_text: str) -> str | None:
+def _extract_text_from_reasoning(
+    reasoning_text: str, required_keys: tuple[str, ...] = ('"slides"', '"title"')
+) -> str | None:
     """Try to pull a JSON object out of reasoning_content.
 
     Qwen3.5 with thinking enabled sometimes puts the final JSON answer
-    inside the reasoning block (after its chain-of-thought).  We look
-    for the *last* top-level ``{...}`` that contains ``"slides"`` — that
-    is almost certainly the outline, not part of the reasoning.
+    inside the reasoning block (after its chain-of-thought).  We return the
+    *last* top-level ``{...}`` that contains all ``required_keys`` — e.g.
+    ``"slides"``/``"title"`` for an outline, or ``"notes"`` for speaker notes.
     """
-    import re
-
     # Find all top-level JSON-like blocks (starting with { on a line)
     candidates: list[str] = []
     depth = 0
@@ -110,9 +110,9 @@ def _extract_text_from_reasoning(reasoning_text: str) -> str | None:
                 candidates.append(reasoning_text[start : i + 1])
                 start = -1
 
-    # Return the last candidate that looks like an outline
+    # Return the last candidate that contains all required keys
     for candidate in reversed(candidates):
-        if '"slides"' in candidate and '"title"' in candidate:
+        if all(key in candidate for key in required_keys):
             return candidate
 
     return None
@@ -193,7 +193,30 @@ def generate_article_text(
     return _run_chat(messages, use_json_mode=False)
 
 
-def _run_chat(messages: list[dict[str, str]], *, use_json_mode: bool = True) -> LLMGenerationResult:
+def generate_speaker_notes(
+    outline: dict,
+    language: str,
+    duration_minutes: int,
+    style: str,
+    article: str | None = None,
+) -> LLMGenerationResult:
+    """Generate per-slide speaker notes as JSON ({"notes": [...]})."""
+    messages = build_notes_messages(
+        outline=outline,
+        language=language,
+        duration_minutes=duration_minutes,
+        style=style,
+        article=article,
+    )
+    return _run_chat(messages, use_json_mode=True, json_keys=('"notes"',))
+
+
+def _run_chat(
+    messages: list[dict[str, str]],
+    *,
+    use_json_mode: bool = True,
+    json_keys: tuple[str, ...] = ('"slides"', '"title"'),
+) -> LLMGenerationResult:
     """Run a chat completion with retries, JSON-mode fallback, and reasoning salvage."""
     client = _build_client()
     last_error: Exception | None = None
@@ -229,9 +252,9 @@ def _run_chat(messages: list[dict[str, str]], *, use_json_mode: bool = True) -> 
             if not raw_text:
                 if reasoning_text:
                     if use_json_mode:
-                        # Qwen3.5 with thinking mode on: the JSON outline often
-                        # ends up inside reasoning_content.  Try to salvage the JSON.
-                        raw_text = _extract_text_from_reasoning(reasoning_text)
+                        # Qwen3.5 with thinking mode on: the JSON answer often
+                        # ends up inside reasoning_content.  Salvage by required keys.
+                        raw_text = _extract_text_from_reasoning(reasoning_text, json_keys)
                     else:
                         # Freeform (e.g. article) output has no JSON to extract — fall
                         # back to the reasoning text itself, stripping any <think> wrapper.

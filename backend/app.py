@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from config import FLASK_PORT, FLASK_DEBUG, FRONTEND_DIST, LOG_FILE, TEMPLATES_DIR
 from schema import (
     OutlineRequest,
+    GenerateNotesRequest,
     LyricsRequest,
     LLMSettingsRequest,
     LYRICS_LANGUAGE_OPTIONS,
@@ -39,6 +40,7 @@ from llm.client import (
     check_llm_health,
     generate_article_text,
     generate_outline_text,
+    generate_speaker_notes,
 )
 from llm.outline_parser import OutlineParseError, OutlineValidationError, parse_outline
 
@@ -360,6 +362,87 @@ def refine_draft():
     correction = (data.get("correction") or "").strip() or None
     logger.info("Refining draft: topic='%s', has_correction=%s", payload.topic, bool(correction))
     return _build_draft_response(payload, prior_article=prior_article, correction=correction)
+
+
+def _parse_notes(raw_text: str) -> list[str] | None:
+    """Parse the notes JSON. Returns the raw note list, or None if unparseable."""
+    data = None
+    try:
+        data = json.loads(raw_text)
+    except Exception:
+        try:
+            from json_repair import repair_json
+            data = json.loads(repair_json(raw_text))
+        except Exception:
+            return None
+
+    if isinstance(data, dict):
+        notes_list = data.get("notes")
+    elif isinstance(data, list):
+        notes_list = data
+    else:
+        notes_list = None
+    if not isinstance(notes_list, list):
+        return None
+    return [str(item).strip() for item in notes_list]
+
+
+@app.route("/api/generate-notes", methods=["POST"])
+def generate_notes():
+    """Generate per-slide speaker notes (讲稿) for the current outline."""
+    data = request.get_json(silent=True)
+    if data is None:
+        return error_response("请提供JSON数据", "JSON body required", 400)
+
+    try:
+        payload = GenerateNotesRequest.model_validate(data)
+    except ValidationError as exc:
+        message_zh, message_en = format_validation_errors(exc)
+        return error_response(message_zh, message_en, 422)
+
+    slides = payload.outline.get("slides")
+    if not isinstance(slides, list) or not slides:
+        return error_response("请提供完整的大纲数据", "Outline data required", 400)
+
+    try:
+        result = generate_speaker_notes(
+            outline=payload.outline,
+            language=payload.language,
+            duration_minutes=payload.duration,
+            style=payload.style,
+            article=payload.article,
+        )
+    except Exception as exc:  # noqa: BLE001 - map known LLM errors, else 500
+        mapped = _llm_error_response(exc)
+        if mapped is not None:
+            return mapped
+        logger.exception("Unexpected error generating speaker notes: %s", exc)
+        return error_response("生成讲稿时出现未知错误。", "Unexpected error while generating speaker notes.", 500)
+
+    parsed = _parse_notes(result.raw_text)
+    count = len(slides)
+    # A completely unparseable / empty result is a real failure, not success.
+    if not parsed or not any(parsed):
+        logger.warning("Speaker notes unparseable or empty (%s slides)", count)
+        return error_response(
+            "未能解析模型返回的讲稿，请重试。",
+            "Could not parse speaker notes from the model. Please retry.",
+            502,
+        )
+
+    warnings: list[str] = []
+    if len(parsed) != count:
+        warnings.append(f"模型返回 {len(parsed)} 段讲稿，已对齐到 {count} 页。")
+        if len(parsed) < count:
+            parsed = parsed + [""] * (count - len(parsed))
+        else:
+            parsed = parsed[:count]
+
+    logger.info("Speaker notes generated: %s slides, %.1fs, warnings=%s", count, result.elapsed_seconds, len(warnings))
+    response = {"success": True, "notes": parsed, "elapsed_seconds": round(result.elapsed_seconds, 1)}
+    if warnings:
+        response["warnings"] = warnings
+    return jsonify(response)
 
 
 @app.route("/api/generate-pptx", methods=["POST"])

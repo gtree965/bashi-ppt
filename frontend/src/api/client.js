@@ -100,6 +100,17 @@ export async function refineDraft({ topic, numSlides, scenario, language, refere
   });
 }
 
+// Speaker notes: generate a per-slide lecture script for the current outline.
+export async function generateSpeakerNotes({ outline, article, language, duration, style }) {
+  return postWithOutlineTimeout('/generate-notes', {
+    outline,
+    article: article || undefined,
+    language,
+    duration,
+    style,
+  });
+}
+
 export async function getLyricsConfig() {
   const res = await fetch(`${API_BASE}/lyrics-config`);
   return await parseJsonResponse(res);

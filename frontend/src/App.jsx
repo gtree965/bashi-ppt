@@ -50,12 +50,14 @@ function App() {
   const [bulletStyle, setBulletStyle] = useState('dot');
   const [selectedTheme, setSelectedTheme] = useState('clean_blue');
   const [article, setArticle] = useState('');
+  const [language, setLanguage] = useState('zh');
   const [draftParams, setDraftParams] = useState(null);
   const [draftBusy, setDraftBusy] = useState(false);
 
   const handleTopicSubmit = async ({ topic, numSlides, scenario, language, referenceText, draftFirst }) => {
     const autoTemplate = TEMPLATE_BY_SCENARIO[scenario] || 'teaching';
     setScenario(scenario);
+    setLanguage(language);
     setTemplate(autoTemplate);
     setSelectedTheme(THEME_BY_TEMPLATE[autoTemplate] || 'clean_blue');
     setError(null);
@@ -168,6 +170,7 @@ function App() {
     setBulletStyle('dot');
     setSelectedTheme('clean_blue');
     setArticle('');
+    setLanguage('zh');
     setDraftParams(null);
     setDraftBusy(false);
   };
@@ -284,7 +287,13 @@ function App() {
                       selectedTheme={selectedTheme}
                       onThemeChange={setSelectedTheme}
                     />
-                    <OutlineEditor outline={outline} onOutlineChange={setOutline} />
+                    <OutlineEditor
+                      outline={outline}
+                      onOutlineChange={setOutline}
+                      scenario={scenario}
+                      language={language}
+                      article={article}
+                    />
                     <GenerateButton
                       onGenerate={handleGeneratePptx}
                       onReset={handleReset}

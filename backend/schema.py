@@ -63,6 +63,7 @@ class SlideData(BaseModel):
     diagram_kind: Optional[str] = Field(default=None, description="UI-only: steps template kind (flow|decision|cycle|sequence)")
     diagram_layout: Optional[str] = Field(default=None, description="UI-only: flowchart layout (TD|LR)")
     diagram_image: Optional[str] = Field(default=None, description="Optional base64 data-URL of the rendered hand-drawn diagram")
+    notes: Optional[str] = Field(default=None, description="Optional speaker notes (lecture script) embedded in the PPTX notes pane")
 
     @field_validator("content_points")
     @classmethod
@@ -163,6 +164,19 @@ class GeneratePptxRequest(BaseModel):
 
     outline: OutlineData
     template_id: str = Field(default="teaching", min_length=1)
+
+
+class GenerateNotesRequest(BaseModel):
+    """Validates speaker-notes requests. Scalars are strict (Literal); the outline is
+    kept as a dict (lenient) so a user-edited outline can't be blocked here — the
+    handler checks it has slides, and the prompt only reads title/type/points."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    outline: dict
+    article: str | None = Field(default=None, max_length=8000)
+    language: LanguageType = Field(default="zh")
+    duration: Literal[5, 10, 20] = Field(default=10)
+    style: Literal["classroom", "sundayschool", "parents", "formal"] = Field(default="formal")
 
 
 # =====================================================================

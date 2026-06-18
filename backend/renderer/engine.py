@@ -103,6 +103,12 @@ class PPTXRenderer:
         prs.save(buffer)
         return buffer.getvalue()
         
+    def _apply_speaker_notes(self, slide, slide_data: dict):
+        """Write speaker notes into the slide's PowerPoint notes pane, if present."""
+        notes = (slide_data.get("notes") or "").strip()
+        if notes:
+            slide.notes_slide.notes_text_frame.text = notes
+
     def _create_blank_slide(self, prs):
         # Index 6 is typically 'Blank'
         slide_layout = prs.slide_layouts[6]
@@ -130,6 +136,7 @@ class PPTXRenderer:
             
     def _render_title_slide(self, prs, slide_data: dict, layout_id: str, current: int, total: int):
         slide = self._create_blank_slide(prs)
+        self._apply_speaker_notes(slide, slide_data)
         layout = LAYOUTS.get(layout_id, LAYOUTS["TitleCenterLayout"])
         
         # Title
@@ -235,6 +242,7 @@ class PPTXRenderer:
 
     def _render_content_slide(self, prs, slide_data: dict, layout_id: str, current: int, total: int, bullet_style: str = "dot"):
         slide = self._create_blank_slide(prs)
+        self._apply_speaker_notes(slide, slide_data)
         layout = LAYOUTS.get(layout_id, LAYOUTS["ContentBulletLayout"])
         
         # Title
@@ -375,6 +383,7 @@ class PPTXRenderer:
         
     def _render_conclusion_slide(self, prs, slide_data: dict, layout_id: str, current: int, total: int):
         slide = self._create_blank_slide(prs)
+        self._apply_speaker_notes(slide, slide_data)
         layout = LAYOUTS.get(layout_id, LAYOUTS["ConclusionLayout"])
         
         # Title

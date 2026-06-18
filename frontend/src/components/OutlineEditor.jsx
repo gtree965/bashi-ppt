@@ -1,7 +1,22 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ImageSearchModal from './ImageSearchModal';
 import { mermaidToPngDataUrl } from '../utils/diagramRenderer';
 import { buildMermaid, DIAGRAM_KINDS } from '../utils/diagramTemplates';
+import { generateSpeakerNotes } from '../api/client';
+
+const NOTE_DURATIONS = [5, 10, 20];
+const NOTE_STYLES = [
+  { id: 'classroom', label: '课堂讲解' },
+  { id: 'sundayschool', label: '主日学' },
+  { id: 'parents', label: '家长沟通' },
+  { id: 'formal', label: '正式演讲' },
+];
+const STYLE_BY_SCENARIO = {
+  teaching: 'classroom',
+  church: 'sundayschool',
+  parents: 'parents',
+  general: 'formal',
+};
 
 const SLIDE_TYPE_STYLES = {
   title: 'border-[#d4a373] bg-[rgba(212,163,115,0.08)]',
@@ -36,10 +51,22 @@ const SLIDE_CONSTRAINTS = {
   },
 };
 
-export default function OutlineEditor({ outline, onOutlineChange }) {
+export default function OutlineEditor({ outline, onOutlineChange, scenario = 'general', language = 'zh', article = '' }) {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeSlideIndex, setActiveSlideIndex] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  // Speaker-notes (讲稿) controls
+  const [notesDuration, setNotesDuration] = useState(10);
+  const [notesStyle, setNotesStyle] = useState(STYLE_BY_SCENARIO[scenario] || 'formal');
+  const [notesBusy, setNotesBusy] = useState(false);
+  const [notesError, setNotesError] = useState(null);
+  const [openNotes, setOpenNotes] = useState(() => new Set());
+  // Track the latest outline so the async notes result can detect structural changes
+  // (add/remove slide) that happened while the LLM was running, and discard if so.
+  const outlineRef = useRef(outline);
+  useEffect(() => {
+    outlineRef.current = outline;
+  }, [outline]);
   // Per-slide diagram preview, keyed by page_number: { status, url, source }.
   // `source` records the Mermaid string the preview was rendered from, so a preview
   // is treated as stale (and re-rendered) whenever the slide's diagram differs — this
@@ -225,6 +252,58 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
     setDiagramModes((prev) => ({ ...prev, [pageNumber]: mode }));
   };
 
+  const updateSlideNotes = (slideIndex, notes) => {
+    patchSlide(slideIndex, { notes: notes || undefined });
+  };
+
+  const toggleNotesOpen = (pageNumber) => {
+    setOpenNotes((prev) => {
+      const next = new Set(prev);
+      if (next.has(pageNumber)) next.delete(pageNumber);
+      else next.add(pageNumber);
+      return next;
+    });
+  };
+
+  // Structure signature: changes when a slide is added/removed (or type changes), so
+  // notes generated for one structure are never written onto a different one.
+  const structureSignature = (o) => `${o.slides.length}:${o.slides.map((s) => s.slide_type).join(',')}`;
+
+  const handleGenerateNotes = async () => {
+    if (notesBusy) return;
+    setNotesBusy(true);
+    setNotesError(null);
+    const snapshot = structureSignature(outline);
+    try {
+      const data = await generateSpeakerNotes({
+        outline,
+        article,
+        language,
+        duration: notesDuration,
+        style: notesStyle,
+      });
+      if (!data.success) {
+        setNotesError(data.error || '讲稿生成失败');
+        return;
+      }
+      const current = outlineRef.current;
+      if (structureSignature(current) !== snapshot) {
+        setNotesError('大纲在生成期间发生了变化，未写入讲稿，请重新生成。');
+        return;
+      }
+      const notes = data.notes || [];
+      onOutlineChange({
+        ...current,
+        slides: current.slides.map((slide, index) => ({ ...slide, notes: notes[index] || undefined })),
+      });
+      setOpenNotes(new Set(current.slides.map((slide) => slide.page_number)));
+    } catch (err) {
+      setNotesError(err.message || '讲稿生成请求出错');
+    } finally {
+      setNotesBusy(false);
+    }
+  };
+
   const openSearch = (slideIndex, currentTitle) => {
     setActiveSlideIndex(slideIndex);
     setSearchQuery(currentTitle || '');
@@ -267,6 +346,55 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
         <div className="text-sm text-bashi-text-muted">
           共 {outline.slides.length} 页
         </div>
+      </div>
+
+      {/* Speaker-notes (讲稿) controls */}
+      <div className="mb-5 rounded-2xl border border-white/10 bg-black/20 p-4">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+          <span className="text-sm font-medium text-bashi-text">讲稿 Speaker Notes</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-bashi-text-secondary">时长</span>
+            <div className="inline-flex rounded-full border border-white/10 p-0.5 text-xs">
+              {NOTE_DURATIONS.map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setNotesDuration(d)}
+                  className={`rounded-full px-2.5 py-1 transition ${notesDuration === d ? 'bg-bashi-copper/20 text-bashi-copper' : 'text-bashi-text-muted hover:text-bashi-text-secondary'}`}
+                >
+                  {d}分钟
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-bashi-text-secondary">风格</span>
+            <div className="inline-flex flex-wrap rounded-full border border-white/10 p-0.5 text-xs">
+              {NOTE_STYLES.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setNotesStyle(s.id)}
+                  className={`rounded-full px-2.5 py-1 transition ${notesStyle === s.id ? 'bg-bashi-copper/20 text-bashi-copper' : 'text-bashi-text-muted hover:text-bashi-text-secondary'}`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleGenerateNotes}
+            disabled={notesBusy}
+            className="bashi-btn-secondary rounded-full px-4 py-2 text-xs font-semibold disabled:opacity-40"
+          >
+            {notesBusy ? '生成讲稿中...' : '生成讲稿'}
+          </button>
+        </div>
+        {notesError && <p className="mt-2 text-xs text-red-200">{notesError}</p>}
+        <p className="mt-2 text-xs text-bashi-text-muted">
+          为每页生成可照着讲的讲稿，导出时写入 PowerPoint 备注区；可逐页编辑。
+        </p>
       </div>
 
       <div className="space-y-4">
@@ -521,6 +649,54 @@ export default function OutlineEditor({ outline, onOutlineChange }) {
                         </div>
                       );
                     })()}
+                  </div>
+                );
+              })()}
+
+              {/* Speaker notes for this slide (all slide types) */}
+              {(() => {
+                const pageNumber = slide.page_number;
+                const hasNotes = !!(slide.notes || '').trim();
+                const isOpen = hasNotes || openNotes.has(pageNumber);
+                if (!isOpen) {
+                  return (
+                    <div className="mt-4 border-t border-white/5 pt-4">
+                      <button
+                        type="button"
+                        onClick={() => toggleNotesOpen(pageNumber)}
+                        className="flex items-center gap-1.5 rounded-full border border-dashed border-bashi-border px-4 py-2 text-xs text-bashi-text-secondary transition hover:border-bashi-border-focus hover:text-bashi-text"
+                      >
+                        📝 + 讲稿
+                      </button>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="mt-4 border-t border-white/5 pt-4">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-bashi-text-secondary">讲稿 Notes</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateSlideNotes(slideIndex, '');
+                          setOpenNotes((prev) => {
+                            const next = new Set(prev);
+                            next.delete(pageNumber);
+                            return next;
+                          });
+                        }}
+                        className="rounded-full border border-white/10 px-3 py-1 text-xs text-bashi-text-muted transition hover:border-red-300/40 hover:text-red-200"
+                      >
+                        清除
+                      </button>
+                    </div>
+                    <textarea
+                      value={slide.notes || ''}
+                      onChange={(event) => updateSlideNotes(slideIndex, event.target.value)}
+                      rows={3}
+                      placeholder="这一页要讲的话…"
+                      className="bashi-input mt-2 w-full rounded-2xl px-4 py-2.5 text-sm leading-6"
+                    />
                   </div>
                 );
               })()}

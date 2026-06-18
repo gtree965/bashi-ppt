@@ -162,6 +162,69 @@ def build_article_messages(
     ]
 
 
+NOTE_STYLE_HINTS = {
+    "classroom": "课堂讲解：面向学生，循序渐进，可加入提问、举例和过渡语。",
+    "sundayschool": "主日学／教会分享：语气温和，贴近信仰语境，鼓励思考与回应。",
+    "parents": "家长沟通：平实诚恳，强调方法与价值，便于家长理解和配合。",
+    "formal": "正式演讲：条理清晰、专业稳重，适合正式场合。",
+}
+
+
+def build_notes_system_prompt(language: str, style: str) -> str:
+    """System prompt for speaker-notes (讲稿) generation."""
+    language_hint = LANGUAGE_HINTS.get(language, LANGUAGE_HINTS["zh"])
+    style_hint = NOTE_STYLE_HINTS.get(style, NOTE_STYLE_HINTS["formal"])
+    return (
+        "你是巴适PPT的备课助手，为每一页幻灯片撰写口语化的讲稿（speaker notes）。\n"
+        "严格要求：\n"
+        '1. 只输出合法JSON，格式为 {"notes":["第1页讲稿","第2页讲稿", ...]}，不要Markdown、不要解释。\n'
+        "2. notes 数组长度必须与幻灯片页数完全一致，按页顺序一一对应。\n"
+        "3. 每段讲稿是可以照着讲出来的连贯口语稿，不是要点罗列。\n"
+        f"4. 讲稿风格：{style_hint}\n"
+        f"5. 语言：{language_hint}\n"
+        "6. 控制篇幅：中文约每分钟 180–220 字，按总时长估算总字数并分配到各页；"
+        "标题页和总结页较短，内容页较充实，整体不要过长。\n"
+        "7. 以大纲为准；参考文章仅作背景，如与大纲冲突，一律以大纲为准。\n"
+    )
+
+
+def build_notes_user_prompt(
+    outline: dict,
+    duration_minutes: int,
+    article: str | None = None,
+) -> str:
+    """User prompt listing the slides (and optional source article) for notes generation."""
+    slides = outline.get("slides", []) if isinstance(outline, dict) else []
+    n = len(slides)
+    parts: list[str] = [
+        f"幻灯片共 {n} 页，目标讲课总时长约 {duration_minutes} 分钟。请为每一页撰写讲稿。"
+    ]
+    if article and article.strip():
+        parts.append("参考文章（仅作背景，如与下面的大纲冲突，以大纲为准）：\n" + article.strip()[:REFERENCE_TEXT_PROMPT_LIMIT])
+    parts.append("各页标题与要点：")
+    for slide in slides:
+        points = "；".join(slide.get("content_points", []) or [])
+        parts.append(
+            f"第{slide.get('page_number')}页 [{slide.get('slide_type')}] {slide.get('title', '')}：{points}"
+        )
+    parts.append(f'请直接输出 JSON：{{"notes":[...]}}（数组长度必须为 {n}）。')
+    return "\n".join(parts)
+
+
+def build_notes_messages(
+    outline: dict,
+    language: str,
+    duration_minutes: int,
+    style: str,
+    article: str | None = None,
+) -> list[dict[str, str]]:
+    """Chat messages for speaker-notes generation."""
+    return [
+        {"role": "system", "content": build_notes_system_prompt(language, style)},
+        {"role": "user", "content": build_notes_user_prompt(outline, duration_minutes, article)},
+    ]
+
+
 def build_messages(
     topic: str,
     num_slides: int,
