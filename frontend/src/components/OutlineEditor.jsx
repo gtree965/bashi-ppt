@@ -367,7 +367,8 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
                   key={d}
                   type="button"
                   onClick={() => setNotesDuration(d)}
-                  className={`rounded-full px-2.5 py-1 transition ${notesDuration === d ? 'bg-bashi-copper/20 text-bashi-copper' : 'text-bashi-text-muted hover:text-bashi-text-secondary'}`}
+                  disabled={notesBusy}
+                  className={`rounded-full px-2.5 py-1 transition disabled:opacity-40 ${notesDuration === d ? 'bg-bashi-copper/20 text-bashi-copper' : 'text-bashi-text-muted hover:text-bashi-text-secondary'}`}
                 >
                   {d}分钟
                 </button>
@@ -382,7 +383,8 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
                   key={s.id}
                   type="button"
                   onClick={() => setNotesStyle(s.id)}
-                  className={`rounded-full px-2.5 py-1 transition ${notesStyle === s.id ? 'bg-bashi-copper/20 text-bashi-copper' : 'text-bashi-text-muted hover:text-bashi-text-secondary'}`}
+                  disabled={notesBusy}
+                  className={`rounded-full px-2.5 py-1 transition disabled:opacity-40 ${notesStyle === s.id ? 'bg-bashi-copper/20 text-bashi-copper' : 'text-bashi-text-muted hover:text-bashi-text-secondary'}`}
                 >
                   {s.label}
                 </button>
