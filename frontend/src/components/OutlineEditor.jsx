@@ -403,7 +403,7 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
         {notesError && <p className="mt-2 text-xs text-red-200">{notesError}</p>}
         {notesNotice && <p className="mt-2 text-xs text-amber-200/80">{notesNotice}</p>}
         <p className="mt-2 text-xs text-bashi-text-muted">
-          为每页生成可照着讲的讲稿，导出时写入 PowerPoint 备注区；可逐页编辑。
+          为每页生成可照着讲的讲稿（要点稿，时长越长内容越充实，由讲者临场展开），导出时写入 PowerPoint 备注区；可逐页编辑。
         </p>
       </div>
 

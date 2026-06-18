@@ -182,9 +182,10 @@ def build_notes_system_prompt(language: str, style: str) -> str:
         "3. 每段讲稿是可以照着讲出来的连贯口语稿，不是要点罗列。\n"
         f"4. 讲稿风格：{style_hint}\n"
         f"5. 语言：{language_hint}\n"
-        "6. 控制篇幅：中文约每分钟 180–220 字，按总时长估算总字数并分配到各页；"
-        "标题页和总结页较短，内容页较充实，整体不要过长。\n"
-        "7. 以大纲为准；参考文章仅作背景，如与大纲冲突，一律以大纲为准。\n"
+        "6. 每页讲稿控制在约 80–160 字的口语要点稿（标题页和总结页更短），不要逐字写满整段时间。\n"
+        "7. 讲课时长用于指导内容的深度与节奏：时间越长，每页讲得越充实、举例和过渡越多，"
+        "但仍保持精炼，留给讲者临场展开，不要为凑时长而啰嗦。\n"
+        "8. 以大纲为准；参考文章仅作背景，如与大纲冲突，一律以大纲为准。\n"
     )
 
 
@@ -197,7 +198,8 @@ def build_notes_user_prompt(
     slides = outline.get("slides", []) if isinstance(outline, dict) else []
     n = len(slides)
     parts: list[str] = [
-        f"幻灯片共 {n} 页，目标讲课总时长约 {duration_minutes} 分钟。请为每一页撰写讲稿。"
+        f"幻灯片共 {n} 页，目标讲课总时长约 {duration_minutes} 分钟"
+        "（时长仅用于把握每页的深度与节奏，不必逐字写满）。请为每一页撰写讲稿。"
     ]
     if article and article.strip():
         parts.append("参考文章（仅作背景，如与下面的大纲冲突，以大纲为准）：\n" + article.strip()[:REFERENCE_TEXT_PROMPT_LIMIT])
