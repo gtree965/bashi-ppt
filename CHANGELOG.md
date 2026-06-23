@@ -1,25 +1,42 @@
 # Changelog
 
-All notable changes to Bashi PPT will be documented in this file.
+All notable user-visible changes to Bashi PPT are documented here.
 
-## v0.1.0 (2026-03-28)
+## v0.1.0 — 2026-06-23
 
-Initial public release.
+First public co-creation release.
 
-### Added
+### Lesson preparation
 
-- Local AI presentation workflow with topic input, scenario selection, outline generation, editing, and PPTX export
-- Support for reference article input during outline generation
-- Automatic theme mapping for teaching, church, parents, and general presentation scenarios
-- Pure local PowerPoint rendering with text fitting and Chinese font handling
-- Hymn lyrics workflow with single-language and bilingual projection slides
-- Lyrics pagination preview and dark-theme lyric rendering
-- Windows portable launcher with embedded Python
-- Traditional/Simplified Chinese conversion for single-language Chinese lyrics
-- Optional extended single-language pagination up to 6 lines per slide
-- English and Chinese project documentation
+- Added creative and strictly grounded material workflows.
+- Added source-fact extraction, user confirmation, per-slide fact mapping, and live structural grounding audit.
+- Added one bounded page-count repair that merges or splits content without silently trimming facts.
+- Added slide-count recommendations based on topic and source-material scope.
+- Added editable preparation articles and Markdown, DOCX, and ODT export.
+- Added per-slide speaker notes with duration and teaching-style controls.
+- Added PowerPoint Notes-pane export.
 
-### Notes
+### Presentation output
 
-- Presentation mode requires a working OpenAI-compatible model endpoint such as LM Studio
-- Hymn lyrics mode works without any LLM dependency
+- Added editable PPTX generation with local rendering.
+- Added diagrams, optional Pixabay image search, themes, and script-aware text fitting.
+- Added Chinese, English, and Chinese-English mixed input handling.
+- Added Simplified Chinese, English, and bilingual output.
+
+### Additional workflow
+
+- Added single-language and bilingual hymn-lyrics presentation generation.
+- Added Chinese script conversion, pagination preview, title slides, and amen slides.
+
+### Distribution
+
+- Added Bashi Creation Suite branding and favicon assets.
+- Added a prebuilt frontend and Windows portable launcher.
+- Added English and Chinese user, privacy, security, and contribution documentation.
+
+### Known boundaries
+
+- Windows with PowerPoint or WPS Office is the primary tested target.
+- macOS and Linux use manual Python installation in this release.
+- Grounding audit validates declared fact references, not semantic truth.
+- Cloud model privacy, availability, and fees depend on the selected provider.

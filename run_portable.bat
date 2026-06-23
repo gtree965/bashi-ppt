@@ -3,12 +3,14 @@ chcp 65001 >nul
 setlocal EnableExtensions EnableDelayedExpansion
 
 REM =========================================================
-REM Bashi PPT (巴适PPT) v0.1.0 - Windows Portable Launcher
+REM Bashi PPT (巴适PPT) - Windows Portable Launcher
 REM Uses embedded Python — no system Python or npm required.
 REM =========================================================
 
 cd /d "%~dp0"
 
+set "APP_VERSION=0.1.0"
+if exist "%~dp0VERSION" set /p APP_VERSION=<"%~dp0VERSION"
 set "LOGFILE=%~dp0launch_log.txt"
 echo [%date% %time%] Launcher started > "%LOGFILE%"
 echo Working directory: %CD% >> "%LOGFILE%"
@@ -18,8 +20,8 @@ set "PYTHON_EXE=%EMBED_DIR%\python.exe"
 
 echo.
 echo  ========================================
-echo   巴适PPT v0.1.0 (Windows Portable)
-echo   Local AI PPT Generator
+echo   巴适PPT v%APP_VERSION% (Windows Portable)
+echo   教师备课与可编辑课件助手
 echo  ========================================
 echo.
 
@@ -73,27 +75,18 @@ if errorlevel 1 (
     del get-pip.py 2>nul
 )
 
-REM 4. Install dependencies
+REM 4. Check dependencies; install only when the package is incomplete
 echo [SETUP] Checking dependencies...
+"%PYTHON_EXE%" -c "import flask, flask_cors, openai, opencc, pptx, PIL, dotenv, json_repair, pydantic" >nul 2>&1
+if not errorlevel 1 goto dependencies_ready
+
+echo [SETUP] Missing dependencies detected. Installing...
 echo [STEP] Installing dependencies... >> "%LOGFILE%"
 "%PYTHON_EXE%" -m pip install -r backend\requirements.txt --no-warn-script-location -q 2>> "%LOGFILE%"
-if errorlevel 1 (
-    echo [ERROR] Failed to install dependencies from requirements.txt.
-    echo         Please check your internet connection.
-    echo [ERROR] pip install failed >> "%LOGFILE%"
-    pause
-    exit /b 1
-)
-echo [OK] Dependencies ready >> "%LOGFILE%"
+if errorlevel 1 goto dependency_error
 
-echo [SETUP] Checking OpenCC...
-"%PYTHON_EXE%" "%~dp0scripts\ensure_opencc.py" >> "%LOGFILE%" 2>&1
-if errorlevel 1 (
-    echo [ERROR] Failed to install OpenCC dependency.
-    echo [ERROR] OpenCC setup failed >> "%LOGFILE%"
-    pause
-    exit /b 1
-)
+:dependencies_ready
+echo [OK] Dependencies ready >> "%LOGFILE%"
 
 REM 5. Check frontend dist
 if not exist "%~dp0frontend\dist\index.html" (
@@ -103,21 +96,11 @@ if not exist "%~dp0frontend\dist\index.html" (
     exit /b 1
 )
 
-REM 6. Check LM Studio (optional — Hymn Studio works without it)
-echo [CHECK] Checking LM Studio connection...
-curl -s http://localhost:1234/v1/models >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [INFO] LM Studio not detected.
-    echo [INFO] Presentation mode requires LM Studio with a loaded model.
-    echo [INFO] Hymn Studio works without LM Studio.
-    echo [INFO] Press any key to continue...
-    pause >nul
-)
-
-REM 7. Start Flask
+REM 6. Start Flask
 echo.
 echo [START] Starting Bashi PPT server...
 echo [URL]   Open browser: http://localhost:5100
+echo [MODEL] Configure local or cloud AI from the gear icon.
 echo.
 echo Press Ctrl+C to stop the server.
 echo.
@@ -132,3 +115,11 @@ echo.
 echo App exited. (Exit code: !EXIT_CODE!)
 echo If the app crashed, check launch_log.txt for details.
 pause
+exit /b !EXIT_CODE!
+
+:dependency_error
+echo [ERROR] Failed to install dependencies from requirements.txt.
+echo         Please check your internet connection.
+echo [ERROR] pip install failed >> "%LOGFILE%"
+pause
+exit /b 1

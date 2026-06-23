@@ -18,6 +18,12 @@ from dotenv import load_dotenv, set_key
 # Project root is one level up from backend/
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = PROJECT_ROOT / ".env"
+VERSION_PATH = PROJECT_ROOT / "VERSION"
+APP_VERSION = (
+    VERSION_PATH.read_text(encoding="utf-8").strip()
+    if VERSION_PATH.exists()
+    else "0.1.0"
+)
 
 # Default base URLs per provider
 _PROVIDER_DEFAULTS: dict[str, str] = {

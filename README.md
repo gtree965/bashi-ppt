@@ -1,98 +1,131 @@
-# Bashi PPT
+<div align="center">
+  <img src="frontend/dist/Bashi_PPT_logo.png" alt="Bashi PPT" width="560">
 
-[中文说明 / Chinese README](./README_CN.md)
+  # Bashi PPT
 
-**Version:** 0.1.0
+  **A teacher-centered lesson-prep, speaker-notes, and editable PowerPoint assistant**
 
-**License:** [MIT License](./LICENSE)
+  [简体中文](README_CN.md) · [User Guide](docs/USER_GUIDE.md) · [Privacy](docs/PRIVACY.md) · [Releases](https://github.com/gtree965/bashi-ppt/releases)
+</div>
 
-**Changelog:** [CHANGELOG.md](./CHANGELOG.md)
+> Bashi PPT is not trying to win the “one-click AI slideshow” race. It helps teachers turn a topic or source material into a reviewable lesson structure, editable slides, and per-slide speaking notes while retaining human control.
 
-Bashi PPT, formerly called SlideForge, is a local-first AI presentation builder for educators, churches, and family communication. It can generate editable presentation outlines from a topic or reference article, render `.pptx` files locally, and also create worship lyric slides in single-language or bilingual mode.
+## Why Bashi PPT?
+
+Most AI presentation tools optimize for speed from prompt to finished deck. Bashi PPT optimizes for a different workflow:
+
+1. understand and review the material;
+2. confirm the content boundary;
+3. edit the outline before rendering;
+4. keep every slide editable;
+5. place the teaching script in PowerPoint speaker notes.
+
+The first audience is educators working primarily in Chinese, including Chinese-English mixed teaching materials.
+
+## Core workflows
+
+### Teaching creation
+
+Use a topic, optional source material, or a generated prep article to create:
+
+- a recommended slide count;
+- an editable outline;
+- a preparation article that can be exported as Markdown, DOCX, or ODT;
+- per-slide speaker notes with selectable duration and teaching style;
+- an editable `.pptx` file rather than a stack of slide images.
+
+### Strictly grounded material
+
+For policies, course notices, source articles, or other material whose boundaries matter:
+
+- extract a fact table from the source;
+- let the user review, edit, remove, and confirm those facts;
+- associate confirmed facts with individual slides;
+- audit missing, invalid, and unassigned fact references;
+- refuse to silently trim slides or invent facts to satisfy a page count.
+
+The audit verifies structural fact references. It does **not** claim that an AI has proven every sentence semantically true.
+
+### Hymn projection
+
+The included hymn tool works without an LLM and supports:
+
+- single-language and bilingual lyrics;
+- projection-oriented dark themes;
+- preview and pagination controls;
+- Simplified/Traditional Chinese conversion;
+- optional title and amen slides.
 
 ## Highlights
 
-- Local AI outline generation through an OpenAI-compatible endpoint such as LM Studio
-- Editable presentation workflow for teaching, church, parent, and general scenarios
-- Automatic theme mapping for presentation mode
-- Pure Python PPTX rendering with Chinese font handling and text fitting
-- Hymn lyrics workflow with single-language and bilingual projection slides
-- Optional Traditional/Simplified Chinese conversion for single-language Chinese lyrics
-- Optional extended single-language pagination up to 6 lines per slide
-- Optional title and amen slides for lyric decks
-- Windows portable launcher with embedded Python
-- Frontend and backend served together through Flask for a simple local setup
+- Local-first architecture with LM Studio and Ollama support
+- Optional OpenAI-compatible cloud endpoints
+- Creative and strictly grounded generation modes
+- Human-confirmed fact table and live structural grounding audit
+- Editable outline, speaker notes, diagrams, images, and PPTX elements
+- Slide-count recommendation based on topic or source-material scope
+- Simplified Chinese, English, and Chinese-English output
+- Chinese, English, and mixed Chinese-English source input
+- PowerPoint speaker-notes export
+- Preparation-article export to Markdown, DOCX, and ODT
+- Optional Pixabay image search
+- Prebuilt React frontend served locally by Flask
+- Independent hymn-lyrics presentation workflow
 
-## Current Release Scope
+## Download
 
-This first release focuses on two core workflows:
+Download the latest Windows portable package from:
 
-1. `Presentation PPT`
-   Generate an outline from a topic, review and edit it, then export a PowerPoint file.
-2. `Hymn Lyrics PPT`
-   Paste hymn lyrics, preview pagination, and export dark-background lyric slides without using an LLM.
+**https://github.com/gtree965/bashi-ppt/releases**
 
-## Requirements
+The Windows package includes Python and the required Python libraries. Node.js is not required.
 
-- Python 3.10 or newer
-- Node.js 18 or newer
-- `npm`
-- LM Studio or another OpenAI-compatible local/server endpoint for presentation outline generation
+## Windows portable quick start
 
-Notes:
+1. Download `Bashi-PPT-v0.1.0-Windows-Portable.zip`.
+2. Extract the entire archive to a normal writable folder.
+3. Double-click `run_portable.bat`.
+4. Open `http://localhost:5100`.
+5. Open the gear icon and configure a local or cloud model.
 
-- The hymn lyrics workflow does not require an LLM.
-- The presentation workflow does require a working model endpoint.
+Do not run the application directly inside the ZIP archive.
 
-## Quick Start
+## AI model options
 
-### Windows Portable Edition
+### Local
 
-```bat
-run_portable.bat
-```
+- **LM Studio**: default endpoint `http://localhost:1234/v1`
+- **Ollama**: default endpoint `http://localhost:11434/v1`
 
-Then open:
+Local models keep lesson content on the computer, but their speed and output quality depend heavily on available RAM, GPU memory, model size, and quantization.
 
-```text
-http://localhost:5100
-```
+### Cloud
 
-The portable launcher:
-
-- uses the bundled embedded Python on Windows
-- installs backend dependencies automatically
-- ensures OpenCC is available for Traditional/Simplified Chinese conversion
-- serves the prebuilt frontend from `frontend/dist`
-- starts the app on port `5100`
-
-Notes:
-
-- `Presentation PPT` still requires LM Studio or another OpenAI-compatible endpoint.
-- `Hymn Lyrics PPT` can run without any LLM.
-
-## Manual Setup
-
-Manual setup is recommended for development, for macOS / Linux, or if you do not want to use the Windows portable bundle.
-
-### 1. Configure the backend
-
-Copy `.env.example` to `.env` and adjust it if needed.
-
-Default local settings use LM Studio:
+OpenRouter is available in the settings interface. Other OpenAI-compatible services can be configured in `.env` using:
 
 ```env
-LLM_BASE_URL=http://localhost:1234/v1
-LLM_API_KEY=lm-studio
-LLM_MODEL=qwen3.5-4b
-LLM_MAX_TOKENS=16384
-LLM_TIMEOUT=360
-FLASK_PORT=5100
+LLM_BASE_URL=https://your-provider.example/v1
+LLM_API_KEY=your-api-key
+LLM_MODEL=provider-model-id
 ```
 
-### 2. Install backend dependencies
+When a cloud endpoint is used, prompts, source material, outlines, and speaker-note requests are sent to that provider. Review the provider’s terms, retention policy, geographic availability, and fees before using sensitive material.
+
+See [Privacy and Data Flow](docs/PRIVACY.md).
+
+## Manual installation
+
+Manual installation is intended for macOS, Linux, development, or users who prefer system Python.
+
+Requirements:
+
+- Python 3.10 or newer
+- Internet access for the initial dependency installation
+- An OpenAI-compatible model endpoint for AI workflows
 
 ```bash
+git clone https://github.com/gtree965/bashi-ppt.git
+cd bashi-ppt
 python -m venv venv
 ```
 
@@ -100,181 +133,71 @@ Windows:
 
 ```bat
 venv\Scripts\activate
-pip install -r backend/requirements.txt
+python -m pip install -r backend\requirements.txt
+copy .env.example .env
+python backend\app.py
 ```
 
 macOS / Linux:
 
 ```bash
 source venv/bin/activate
-pip install -r backend/requirements.txt
+python -m pip install -r backend/requirements.txt
+cp .env.example .env
+python backend/app.py
 ```
 
-### 3. Install frontend dependencies
-
-```bash
-cd frontend
-npm install
-npm run build
-```
-
-### 4. Start the app
-
-```bash
-cd backend
-python app.py
-```
-
-Then open:
-
-```text
-http://localhost:5100
-```
+The repository already contains the production frontend build. Node.js is only needed when changing frontend source code.
 
 ## Development
 
-For frontend development with Vite:
+Backend:
+
+```bash
+python -m unittest discover -s tests
+python backend/app.py
+```
+
+Frontend:
 
 ```bash
 cd frontend
 npm install
+npm run lint
+npm run test:grounding-audit
 npm run dev
 ```
 
-For backend development:
-
-```bash
-cd backend
-python app.py
-```
-
-The Vite config proxies `/api` requests to the Flask backend on port `5100`.
-
-## Main Features
-
-### Presentation workflow
-
-- Topic input with scenario selection
-- Optional reference article input
-- AI-generated structured outline
-- Outline editing before export
-- PowerPoint export using local rendering
-
-### Hymn workflow
-
-- Paste raw hymn lyrics
-- Single-language or bilingual mode
-- Language dropdowns instead of fixed language presets
-- Optional Traditional/Simplified Chinese conversion in single-language Chinese mode
-- Optional extended single-language pagination up to 6 lines per slide
-- Smart section parsing and slide splitting
-- Projection-oriented dark themes
-- Preview before export
-
-## How to Use
-
-### Presentation PPT
-
-1. Open the `Presentation PPT` tab.
-2. Enter a topic and choose a scenario.
-3. Optionally paste a reference article.
-4. Wait for the local model to generate an outline.
-5. Review and edit the outline.
-6. Export the deck as a PowerPoint file.
-
-### Hymn Lyrics PPT
-
-1. Open the `Hymn Lyrics PPT` tab.
-2. Enter the song title and paste the lyrics.
-3. Choose single-language or bilingual mode.
-4. If needed, enable Chinese script conversion or extended single-language line count.
-5. Adjust lines per slide and theme.
-6. Optionally enable a title slide or amen slide.
-7. Preview pagination.
-8. Export the lyric deck as a PowerPoint file.
-
-## Project Structure
-
-```text
-slideforge/
-├─ backend/
-│  ├─ app.py
-│  ├─ llm/
-│  ├─ lyrics/
-│  ├─ renderer/
-│  └─ templates/
-├─ frontend/
-│  ├─ src/
-│  └─ dist/
-├─ scripts/
-├─ .env.example
-├─ README.md
-└─ README_CN.md
-```
-
-## Tech Stack
-
-- Frontend: React, Vite, Tailwind CSS
-- Backend: Flask, Pydantic
-- PPTX generation: `python-pptx`, Pillow
-- LLM integration: OpenAI-compatible API client
-
-## Troubleshooting
-
-### Presentation mode cannot generate outlines
-
-Check these first:
-
-- LM Studio is running
-- A model is loaded
-- The model id in `.env` matches the active model
-- The local server is enabled on the expected port
-
-### Frontend is not visible
-
-Build the frontend first:
+Production build:
 
 ```bash
 cd frontend
-npm install
 npm run build
 ```
 
-### PowerPoint text overflows
+## Current support scope
 
-The renderer already applies text fitting, but extremely long titles or dense content may still need manual editing before export.
+- Primary target: Windows with PowerPoint or WPS Office
+- Code path: Windows, macOS, and Linux
+- macOS/Linux packaging: manual Python installation in v0.1.0
+- Official source/output languages: Chinese, English, and Chinese-English mixed content
+- Other languages: experimental
+- Keynote and LibreOffice may render some PPTX details differently
 
-## FAQ
+## Documentation
 
-### Does the hymn workflow need LM Studio?
-
-No. Hymn lyric generation is a local parsing and rendering workflow and can run without any LLM.
-
-### Does Chinese script conversion need internet access?
-
-No. Traditional/Simplified Chinese conversion is handled locally through OpenCC after the dependency is installed.
-
-### Why is outline generation slow?
-
-Presentation mode depends on a local model. On smaller or reasoning-heavy models, generation can take several minutes.
-
-### Can I use my own OpenAI-compatible endpoint?
-
-Yes. Update `.env` with your own `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL`.
-
-## Credits
-
-- Flask for the backend web framework
-- React and Vite for the frontend
-- `python-pptx` and Pillow for PowerPoint generation
-- LM Studio for local OpenAI-compatible model serving
-- The open-source community
-
-## Author
-
-**Alex Li**  
-Email: ncorecpu@gmail.com
+- [English User Guide](docs/USER_GUIDE.md)
+- [中文使用指南](docs/USER_GUIDE_CN.md)
+- [Privacy and Data Flow](docs/PRIVACY.md)
+- [隐私与数据去向](docs/PRIVACY_CN.md)
+- [Release Notes v0.1.0](docs/RELEASE_NOTES_v0.1.0.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
 
 ## License
 
-This project is released under the **[MIT License](./LICENSE)**.
+Bashi PPT is released under the [MIT License](LICENSE).
+
+## Author
+
+Alex Li · ncorecpu@gmail.com

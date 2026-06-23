@@ -1,14 +1,4 @@
-"""
-Bashi PPT (巴适PPT) v0.1.0 — Flask backend entry point.
-
-Routes:
-  GET  /                      → Serve React frontend
-  GET  /api/health             → Health check
-  GET  /api/templates          → List available templates
-  POST /api/prepare-grounded-facts → Extract facts for user confirmation
-  POST /api/generate-outline   → Generate outline (Sprint 1: mock data)
-  POST /api/generate-pptx      → Render PPTX (Sprint 1: not implemented)
-"""
+"""Bashi PPT Flask backend and local frontend server."""
 
 import json
 import logging
@@ -17,7 +7,14 @@ from flask import Flask, send_from_directory, jsonify, request
 from flask_cors import CORS
 from pydantic import ValidationError
 
-from config import FLASK_PORT, FLASK_DEBUG, FRONTEND_DIST, LOG_FILE, TEMPLATES_DIR
+from config import (
+    APP_VERSION,
+    FLASK_PORT,
+    FLASK_DEBUG,
+    FRONTEND_DIST,
+    LOG_FILE,
+    TEMPLATES_DIR,
+)
 from schema import (
     OutlineRequest,
     GroundedFactPreparationRequest,
@@ -154,7 +151,7 @@ def health():
     llm_connected, llm_model = check_llm_health()
     response = {
         "status": "ok",
-        "version": "0.1.0",
+        "version": APP_VERSION,
         "llm_connected": llm_connected,
         "llm_model": llm_model,
     }
@@ -1312,6 +1309,6 @@ def test_llm_settings():
 # =====================================================================
 
 if __name__ == "__main__":
-    logger.info(f"Bashi PPT v0.1.0 starting on http://127.0.0.1:{FLASK_PORT}")
+    logger.info(f"Bashi PPT v{APP_VERSION} starting on http://127.0.0.1:{FLASK_PORT}")
     logger.info(f"Frontend served from: {FRONTEND_DIST}")
     app.run(debug=FLASK_DEBUG, host="127.0.0.1", port=FLASK_PORT)

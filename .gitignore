@@ -12,5 +12,6 @@ slideforge.log
 .tmp-pip/
 *.egg-info/
 .DS_Store
+/release/
 /*.pptx
 /test_outline_*.json
