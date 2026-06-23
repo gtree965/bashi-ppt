@@ -27,7 +27,63 @@ export async function getTemplates() {
   return res.json();
 }
 
-export async function generateOutline(topic, numSlides, scenario, language, referenceText = '') {
+export async function recommendSlides({
+  topic,
+  referenceText = '',
+  scenario,
+  outputLanguage,
+  signal,
+}) {
+  const res = await fetch(`${API_BASE}/recommend-slides`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      topic,
+      reference_text: referenceText.trim() || undefined,
+      scenario,
+      output_language: outputLanguage,
+    }),
+    signal,
+  });
+  return await parseJsonResponse(res);
+}
+
+export async function prepareGroundedFacts({
+  referenceText,
+}) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), OUTLINE_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${API_BASE}/prepare-grounded-facts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reference_text: referenceText.trim(),
+      }),
+      signal: controller.signal,
+    });
+    return await parseJsonResponse(res);
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('材料事实提取超时，请检查当前 AI 模型连接。');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function generateOutline(
+  topic,
+  numSlides,
+  scenario,
+  outputLanguage,
+  referenceText = '',
+  generationMode = 'creative',
+  slideCountMode = 'manual',
+  factTable = null
+) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), OUTLINE_TIMEOUT_MS);
 
@@ -39,8 +95,11 @@ export async function generateOutline(topic, numSlides, scenario, language, refe
         topic,
         num_slides: numSlides,
         scenario,
-        language,
+        output_language: outputLanguage,
         reference_text: referenceText.trim() || undefined,
+        generation_mode: generationMode,
+        slide_count_mode: slideCountMode,
+        fact_table: factTable || undefined,
       }),
       signal: controller.signal,
     });
@@ -77,37 +136,93 @@ async function postWithOutlineTimeout(path, body) {
 }
 
 // Draft step: generate an article + an outline derived from it.
-export async function generateDraft(topic, numSlides, scenario, language, referenceText = '') {
+export async function generateDraft(
+  topic,
+  numSlides,
+  scenario,
+  outputLanguage,
+  referenceText = '',
+  slideCountMode = 'manual'
+) {
   return postWithOutlineTimeout('/generate-draft', {
     topic,
     num_slides: numSlides,
     scenario,
-    language,
+    output_language: outputLanguage,
     reference_text: referenceText.trim() || undefined,
+    slide_count_mode: slideCountMode,
   });
 }
 
 // Refine step: regenerate article + outline from the prior article and a correction.
-export async function refineDraft({ topic, numSlides, scenario, language, referenceText = '', priorArticle, correction }) {
+export async function refineDraft({
+  topic,
+  numSlides,
+  scenario,
+  outputLanguage,
+  referenceText = '',
+  priorArticle,
+  correction,
+  slideCountMode = 'manual',
+}) {
   return postWithOutlineTimeout('/refine-draft', {
     topic,
     num_slides: numSlides,
     scenario,
-    language,
+    output_language: outputLanguage,
     reference_text: referenceText.trim() || undefined,
     prior_article: priorArticle,
     correction,
+    slide_count_mode: slideCountMode,
   });
 }
 
+export async function exportPrepArticle({ title, article, format }) {
+  const res = await fetch(`${API_BASE}/export-article`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, article, format }),
+  });
+
+  if (!res.ok) {
+    try {
+      await parseJsonResponse(res);
+    } catch (error) {
+      throw new Error(error.message || 'Prep article export failed');
+    }
+  }
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const printableTitle = [...(title || '备课文章')]
+    .map((character) => (character.charCodeAt(0) < 32 ? '_' : character))
+    .join('');
+  const safeTitle = printableTitle.replace(/[<>:"/\\|?*]/g, '_');
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${safeTitle}.${format}`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // Speaker notes: generate a per-slide lecture script for the current outline.
-export async function generateSpeakerNotes({ outline, article, language, duration, style }) {
+export async function generateSpeakerNotes({
+  outline,
+  article,
+  outputLanguage,
+  duration,
+  style,
+  generationMode = 'creative',
+  factTable = [],
+}) {
   return postWithOutlineTimeout('/generate-notes', {
     outline,
     article: article || undefined,
-    language,
+    output_language: outputLanguage,
     duration,
     style,
+    generation_mode: generationMode,
+    fact_table: factTable,
   });
 }
 

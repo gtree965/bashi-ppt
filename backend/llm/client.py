@@ -5,6 +5,7 @@ LLM Client — OpenAI-compatible interface for LM Studio / Ollama / cloud APIs.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 
@@ -12,7 +13,13 @@ import httpx
 from openai import APIConnectionError, APIError, APITimeoutError, BadRequestError, OpenAI
 
 import config  # import the module, not its names, so hot-reload works
-from .prompts import build_messages, build_article_messages, build_notes_messages
+from .prompts import (
+    build_messages,
+    build_article_messages,
+    build_notes_messages,
+    build_fact_extraction_messages,
+    build_grounded_repair_messages,
+)
 
 logger = logging.getLogger("slideforge")
 
@@ -63,6 +70,21 @@ def _build_client() -> OpenAI:
         timeout=config.LLM_TIMEOUT,
         http_client=httpx.Client(verify=config.VERIFY_SSL),
     )
+
+
+def _provider_extra_body() -> dict:
+    """Provider-specific request extras for the OpenAI-compatible call.
+
+    SiliconFlow's Qwen3 hybrid models think by default and put the real answer
+    in ``reasoning_content`` (often leaving ``content`` empty and the request
+    slow).  Disable thinking so we get fast, complete content.
+    """
+    base = (config.LLM_BASE_URL or "").lower()
+    if "siliconflow" in base:
+        return {"enable_thinking": False}
+    if "dashscope.aliyuncs.com" in base or ".maas.aliyuncs.com" in base:
+        return {"enable_thinking": False}
+    return {}
 
 
 
@@ -155,60 +177,230 @@ def check_llm_health() -> tuple[bool, str | None]:
         return False, None
 
 
+def extract_facts(
+    material: str,
+    temperature: float | None = 0.0,
+) -> list[dict]:
+    """Pre-pass for grounded generation: extract a numbered fact table.
+
+    Returns a list of ``{"id": int, "text": str}``; empty list on any failure
+    (callers fall back to passing the raw material instead).
+    """
+    import json
+
+    if not material or not material.strip():
+        return []
+
+    def _loads(text: str):
+        """Lenient parse: plain JSON, then json-repair (handles text-mode models
+        like LM Studio that reject response_format=json_object and return prose)."""
+        try:
+            return json.loads(text)
+        except Exception:
+            try:
+                from json_repair import repair_json
+                return json.loads(repair_json(text))
+            except Exception:
+                return None
+
+    try:
+        messages = build_fact_extraction_messages(material)
+        result = _run_chat(messages, use_json_mode=True, json_keys=('"facts"',), temperature=temperature)
+        data = _loads(result.raw_text)
+        facts = data.get("facts", []) if isinstance(data, dict) else []
+        cleaned: list[dict] = []
+        for i, fact in enumerate(facts, start=1):
+            if isinstance(fact, dict):
+                text = str(fact.get("text", "")).strip()
+                fid = fact.get("id", i)
+            else:
+                text, fid = str(fact).strip(), i
+            if text:
+                cleaned.append({"id": int(fid) if str(fid).isdigit() else i, "text": text})
+        return cleaned
+    except Exception as exc:
+        logger.warning("Fact extraction failed (%s); proceeding without fact table", exc)
+        return []
+
+
+_GROUNDING_SENSITIVE_PATTERN = re.compile(
+    r"("
+    r"\d|%|％|"
+    r"不得|禁止|严禁|必须|务必|不按|不允许|不能|不可|无需|不需要|不要求|"
+    r"只限|仅限|至少|至多|应当|需要|负责|提供|承担|"
+    r"\b(?:must|shall|required|may\s+not|must\s+not|do\s+not|only|"
+    r"at\s+least|at\s+most|responsible|provide)\b"
+    r")",
+    flags=re.IGNORECASE,
+)
+
+
+def _source_fact_clauses(material: str) -> list[str]:
+    """Split source material into short clauses while preserving exact wording."""
+    text = (material or "").strip()
+    if not text:
+        return []
+    chunks = re.split(
+        r"(?:\r?\n)+|(?<=[。！？；])|(?<=[.!?;])\s+",
+        text,
+    )
+    clauses: list[str] = []
+    for chunk in chunks:
+        cleaned = re.sub(r"\s+", " ", chunk).strip(" \t\r\n•*-")
+        if not cleaned:
+            continue
+        if len(cleaned) <= 1000:
+            clauses.append(cleaned)
+            continue
+        # Avoid dropping a long paragraph if the source did not contain sentence
+        # punctuation. Comma-level chunks remain verbatim and are easier to audit.
+        parts = re.split(r"(?<=[，,：:])", cleaned)
+        clauses.extend(part.strip() for part in parts if part.strip())
+    return clauses
+
+
+def _normalized_fact_text(text: str) -> str:
+    return re.sub(r"[\W_]+", "", text, flags=re.UNICODE).lower()
+
+
+def build_grounded_fact_table(
+    material: str,
+    *,
+    max_facts: int = 80,
+) -> list[dict]:
+    """Build a safer fact table from model extraction plus exact source clauses.
+
+    The LLM provides semantic coverage. Exact source clauses containing numbers,
+    negation, duties, limits, or responsibility are then appended verbatim so a
+    paraphrase cannot silently weaken "不得" into "不要求", alter a time, or
+    change who must act. If model extraction fails, source clauses become the
+    complete fallback fact table.
+    """
+    source_clauses = _source_fact_clauses(material)
+    model_facts = extract_facts(material, temperature=0.0)
+    if model_facts:
+        # Let exact source wording replace model paraphrases for high-risk facts.
+        # This avoids asking the generator to cover duplicate versions of the
+        # same rule while retaining semantic extraction for ordinary facts.
+        candidates = [
+            str(fact.get("text", "")).strip()
+            for fact in model_facts
+            if isinstance(fact, dict)
+            and str(fact.get("text", "")).strip()
+            and not _GROUNDING_SENSITIVE_PATTERN.search(str(fact.get("text", "")))
+        ]
+        candidates.extend(
+            clause
+            for clause in source_clauses
+            if _GROUNDING_SENSITIVE_PATTERN.search(clause)
+        )
+    else:
+        candidates = list(source_clauses)
+
+    result: list[dict] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = _normalized_fact_text(candidate)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append({"id": len(result) + 1, "text": candidate[:1000]})
+        if len(result) >= max_facts:
+            break
+
+    logger.info(
+        "Grounded fact table built: model_facts=%s, source_clauses=%s, final_facts=%s",
+        len(model_facts),
+        len(source_clauses),
+        len(result),
+    )
+    return result
+
+
 def generate_outline_text(
     topic: str,
     num_slides: int,
     scenario: str,
-    language: str,
+    output_language: str,
     reference_text: str | None = None,
+    temperature: float | None = None,
+    mode: str = "creative",
+    fact_table: list[dict] | None = None,
 ) -> LLMGenerationResult:
     """Generate raw outline text from the configured model."""
     messages = build_messages(
         topic=topic,
         num_slides=num_slides,
         scenario=scenario,
-        language=language,
+        output_language=output_language,
         reference_text=reference_text,
+        mode=mode,
+        fact_table=fact_table,
     )
-    return _run_chat(messages, use_json_mode=True)
+    return _run_chat(messages, use_json_mode=True, temperature=temperature)
+
+
+def repair_grounded_outline_text(
+    *,
+    previous_outline: dict,
+    target_slides: int,
+    output_language: str,
+    fact_table: list[dict],
+    missing_fact_ids: list[int] | None = None,
+) -> LLMGenerationResult:
+    """Perform one directed count repair while retaining all confirmed facts."""
+    messages = build_grounded_repair_messages(
+        previous_outline=previous_outline,
+        target_slides=target_slides,
+        output_language=output_language,
+        fact_table=fact_table,
+        missing_fact_ids=missing_fact_ids,
+    )
+    return _run_chat(messages, use_json_mode=True, temperature=0.1)
 
 
 def generate_article_text(
     topic: str,
     scenario: str,
-    language: str,
+    output_language: str,
     reference_text: str | None = None,
     prior_article: str | None = None,
     correction: str | None = None,
+    temperature: float | None = None,
 ) -> LLMGenerationResult:
     """Generate a freeform draft article (plain text) for the pre-outline step."""
     messages = build_article_messages(
         topic=topic,
         scenario=scenario,
-        language=language,
+        output_language=output_language,
         reference_text=reference_text,
         prior_article=prior_article,
         correction=correction,
     )
-    return _run_chat(messages, use_json_mode=False)
+    return _run_chat(messages, use_json_mode=False, temperature=temperature)
 
 
 def generate_speaker_notes(
     outline: dict,
-    language: str,
+    output_language: str,
     duration_minutes: int,
     style: str,
     article: str | None = None,
+    temperature: float | None = None,
+    mode: str = "creative",
+    fact_table: list[dict] | None = None,
 ) -> LLMGenerationResult:
     """Generate per-slide speaker notes as JSON ({"notes": [...]})."""
     messages = build_notes_messages(
         outline=outline,
-        language=language,
+        output_language=output_language,
         duration_minutes=duration_minutes,
         style=style,
         article=article,
+        mode=mode,
+        fact_table=fact_table,
     )
-    return _run_chat(messages, use_json_mode=True, json_keys=('"notes"',))
+    return _run_chat(messages, use_json_mode=True, json_keys=('"notes"',), temperature=temperature)
 
 
 def _run_chat(
@@ -216,10 +408,12 @@ def _run_chat(
     *,
     use_json_mode: bool = True,
     json_keys: tuple[str, ...] = ('"slides"', '"title"'),
+    temperature: float | None = None,
 ) -> LLMGenerationResult:
     """Run a chat completion with retries, JSON-mode fallback, and reasoning salvage."""
     client = _build_client()
     last_error: Exception | None = None
+    effective_temperature = config.LLM_TEMPERATURE if temperature is None else temperature
 
     for attempt in range(MAX_RETRIES + 1):
         started_at = time.perf_counter()
@@ -227,11 +421,14 @@ def _run_chat(
             request_kwargs = {
                 "model": config.LLM_MODEL,
                 "messages": messages,
-                "temperature": config.LLM_TEMPERATURE,
+                "temperature": effective_temperature,
                 "max_tokens": config.LLM_MAX_TOKENS,
             }
             if use_json_mode:
                 request_kwargs["response_format"] = {"type": "json_object"}
+            extra_body = _provider_extra_body()
+            if extra_body:
+                request_kwargs["extra_body"] = extra_body
 
             logger.info(
                 "Calling LLM endpoint: model=%s, json_mode=%s, attempt=%s",
@@ -326,9 +523,162 @@ def _run_chat(
     raise OutlineGenerationError(f"LLM request failed after retries: {last_error}")
 
 
+def _clean_image_search_phrase(line: str, *, min_words: int = 1) -> str | None:
+    """Validate one candidate line as an English image-search phrase."""
+    line = re.sub(
+        r"^(?:final_query|english(?: translation| keywords?| query)?|"
+        r"search(?: keywords?| query)?|answer)\s*:\s*",
+        "",
+        line.strip(),
+        flags=re.IGNORECASE,
+    )
+    line = line.strip("`*_#\"' .,:;!?()[]{}<>")
+    line = re.sub(r"[-_/]+", " ", line)
+    line = re.sub(r"[^A-Za-z0-9+& ]+", " ", line)
+    line = re.sub(r"\s+", " ", line).strip().lower()
+    words = line.split()
+    if not (min_words <= len(words) <= 5) or len(line) > 72:
+        return None
+
+    # Common fragments from a model explaining the task instead of answering it.
+    rejected_phrases = (
+        "literal translation",
+        "task convert",
+        "convert to",
+        "english stock",
+        "stock photo keywords",
+        "words here",
+    )
+    if any(line.startswith(phrase) for phrase in rejected_phrases):
+        return None
+    return line
+
+
+def _sanitize_image_search_phrase(
+    raw_text: str,
+    *,
+    require_final_marker: bool = False,
+) -> str | None:
+    """Extract a complete query without mistaking reasoning fragments for answers.
+
+    Normal ``message.content`` may be a plain one-line phrase.  Reasoning output
+    is untrusted unless the model emitted an explicit ``FINAL_QUERY:`` line.
+    """
+    if not raw_text:
+        return None
+
+    cleaned = _strip_think_tags(raw_text)
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    marked_lines = [
+        line
+        for line in lines
+        if re.match(r"^\s*(?:[-*]\s*)?final_query\s*:", line, flags=re.IGNORECASE)
+    ]
+    for line in reversed(marked_lines):
+        candidate = re.sub(r"^\s*[-*]\s*", "", line)
+        result = _clean_image_search_phrase(candidate, min_words=2)
+        if result:
+            return result
+
+    if require_final_marker or len(lines) != 1:
+        return None
+    return _clean_image_search_phrase(lines[0])
+
+
+def _translate_image_query_with_lmstudio(text: str) -> str | None:
+    """Use LM Studio's native API so thinking can be disabled per request."""
+    if config.LLM_PROVIDER != "lmstudio":
+        return None
+
+    native_base_url = re.sub(r"/v1/?$", "", config.LLM_BASE_URL.strip().rstrip("/"))
+    url = f"{native_base_url}/api/v1/chat"
+    prompt = (
+        "Translate this slide title into one natural English stock-photo search phrase "
+        "of 2 to 5 words. Output the phrase only, without labels or explanation.\n"
+        f"Title: {text}"
+    )
+    headers = {
+        "Authorization": f"Bearer {config.LLM_API_KEY or 'lm-studio'}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "input": prompt,
+        "temperature": 0,
+        "max_output_tokens": 24,
+        "reasoning": "off",
+        "store": False,
+    }
+
+    try:
+        with httpx.Client(verify=config.VERIFY_SSL, timeout=8) as client:
+            models_response = client.get(
+                f"{native_base_url}/api/v1/models",
+                headers=headers,
+            )
+            models_response.raise_for_status()
+            loaded_models = []
+            for model in models_response.json().get("models", []):
+                if model.get("type") != "llm":
+                    continue
+                for instance in model.get("loaded_instances", []):
+                    loaded_models.append(
+                        {
+                            "key": str(model.get("key") or ""),
+                            "id": str(instance.get("id") or ""),
+                        }
+                    )
+
+            configured_model = config.LLM_MODEL
+            matching_model = next(
+                (
+                    model["id"] or model["key"]
+                    for model in loaded_models
+                    if configured_model in (model["id"], model["key"])
+                ),
+                None,
+            )
+            if matching_model:
+                native_model = matching_model
+            elif len(loaded_models) == 1:
+                native_model = loaded_models[0]["id"] or loaded_models[0]["key"]
+            else:
+                native_model = configured_model
+
+            payload["model"] = native_model
+            response = client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+
+        for item in data.get("output", []):
+            if item.get("type") != "message":
+                continue
+            translated = _sanitize_image_search_phrase(str(item.get("content") or ""))
+            if translated:
+                reasoning_tokens = data.get("stats", {}).get("reasoning_output_tokens")
+                logger.info(
+                    "Translated image query with LM Studio thinking disabled: '%s' to '%s' "
+                    "(reasoning_tokens=%s)",
+                    text,
+                    translated,
+                    reasoning_tokens,
+                )
+                return translated
+    except Exception as exc:
+        # Older LM Studio versions do not have /api/v1/chat. Fall back to the
+        # OpenAI-compatible endpoint so image search remains available.
+        logger.warning(
+            "LM Studio native no-thinking image translation failed for '%s': %s",
+            text,
+            exc,
+        )
+    return None
+
+
 def translate_to_english(text: str) -> str:
-    """Translate a given query/text to English using the configured LLM.
-    If the text is already in English, or translation fails/timeouts, returns the original text.
+    """Convert a slide title into a concise, visually meaningful English query.
+
+    If conversion fails, return the original text so Pixabay can still use its
+    own language support.
     """
     if not text:
         return text
@@ -336,36 +686,53 @@ def translate_to_english(text: str) -> str:
     # Quick check: if all characters are ASCII, it's likely already in English/ASCII.
     try:
         text.encode('ascii')
-        return text
+        return _sanitize_image_search_phrase(text) or text
     except UnicodeEncodeError:
         pass
 
+    translated = _translate_image_query_with_lmstudio(text)
+    if translated:
+        return translated
+
     try:
         client = _build_client()
-        prompt = (
-            "You are a translation assistant. Translate the following Chinese/non-English query to a concise, search-friendly English keyword or short phrase (suitable for searching pictures on Pixabay, e.g. 'church', 'artificial intelligence', 'happy family').\n"
-            "Return ONLY the translated English text. Do not include quotes, explanation, or punctuation.\n"
-            f"Query: {text}\n"
-            "English translation:"
-        )
-
         response = client.chat.completions.create(
             model=config.LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=20,
-            timeout=5, # Fast timeout for UI responsiveness
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Translate the slide title into one natural English stock-photo search "
+                        "phrase of 2 to 5 words. Return exactly one line in this format: "
+                        "FINAL_QUERY: words here."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            temperature=0,
+            max_tokens=32,
+            timeout=8,
+            extra_body=_provider_extra_body() or None,
         )
 
         choice = response.choices[0] if response.choices else None
         message = getattr(choice, "message", None)
-        translated = (getattr(message, "content", None) or "").strip()
-        # Clean quotes
-        translated = translated.replace('"', '').replace("'", "")
+        content = (getattr(message, "content", None) or "").strip()
+        reasoning = (getattr(message, "reasoning_content", None) or "").strip()
+        translated = _sanitize_image_search_phrase(content)
+        if not translated:
+            translated = _sanitize_image_search_phrase(
+                reasoning,
+                require_final_marker=True,
+            )
 
         if translated:
             logger.info("Translated search query from '%s' to '%s'", text, translated)
             return translated
+        logger.warning(
+            "Rejected incomplete image-search translation for '%s'; using original query",
+            text,
+        )
     except Exception as e:
         logger.warning("Failed to translate query '%s' to English: %s", text, e)
 

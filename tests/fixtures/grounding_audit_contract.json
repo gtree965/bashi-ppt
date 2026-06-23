@@ -1,0 +1,158 @@
+[
+  {
+    "name": "reports missing invalid and ungrounded pages",
+    "outline": {
+      "slides": [
+        {
+          "page_number": 1,
+          "slide_type": "title",
+          "fact_ids": [1]
+        },
+        {
+          "page_number": 2,
+          "slide_type": "content",
+          "fact_ids": [1, 99]
+        },
+        {
+          "page_number": 3,
+          "slide_type": "content",
+          "fact_ids": []
+        },
+        {
+          "page_number": 4,
+          "slide_type": "conclusion",
+          "fact_ids": [2]
+        }
+      ]
+    },
+    "fact_table": [
+      {
+        "id": 1,
+        "text": "事实一"
+      },
+      {
+        "id": 2,
+        "text": "事实二"
+      },
+      {
+        "id": 3,
+        "text": "事实三"
+      }
+    ],
+    "expected": {
+      "fact_count": 3,
+      "declared_fact_ids": [1, 2],
+      "missing_fact_ids": [3],
+      "invalid_fact_ids": [99],
+      "ungrounded_content_pages": [3],
+      "fact_coverage": 0.667,
+      "structurally_valid": false,
+      "complete": false
+    }
+  },
+  {
+    "name": "complete mapping ignores duplicate declarations",
+    "outline": {
+      "slides": [
+        {
+          "page_number": 1,
+          "slide_type": "title",
+          "fact_ids": []
+        },
+        {
+          "page_number": 2,
+          "slide_type": "content",
+          "fact_ids": [3, 1, 1]
+        },
+        {
+          "page_number": 3,
+          "slide_type": "content",
+          "fact_ids": [2]
+        },
+        {
+          "page_number": 4,
+          "slide_type": "conclusion",
+          "fact_ids": []
+        }
+      ]
+    },
+    "fact_table": [
+      {
+        "id": 3,
+        "text": "事实三"
+      },
+      {
+        "id": 1,
+        "text": "事实一"
+      },
+      {
+        "id": 2,
+        "text": "事实二"
+      }
+    ],
+    "expected": {
+      "fact_count": 3,
+      "declared_fact_ids": [1, 2, 3],
+      "missing_fact_ids": [],
+      "invalid_fact_ids": [],
+      "ungrounded_content_pages": [],
+      "fact_coverage": 1.0,
+      "structurally_valid": true,
+      "complete": true
+    }
+  },
+  {
+    "name": "rejects booleans and falls back from invalid page numbers",
+    "outline": {
+      "slides": [
+        {
+          "page_number": 1,
+          "slide_type": "content",
+          "fact_ids": [true]
+        },
+        {
+          "page_number": false,
+          "slide_type": "content",
+          "fact_ids": [7]
+        }
+      ]
+    },
+    "fact_table": [
+      {
+        "id": true,
+        "text": "布尔值不是事实编号"
+      },
+      {
+        "id": 7,
+        "text": "有效事实"
+      }
+    ],
+    "expected": {
+      "fact_count": 1,
+      "declared_fact_ids": [7],
+      "missing_fact_ids": [],
+      "invalid_fact_ids": [],
+      "ungrounded_content_pages": [1],
+      "fact_coverage": 1.0,
+      "structurally_valid": false,
+      "complete": false
+    }
+  },
+  {
+    "name": "handles absent collections without claiming completion",
+    "outline": {
+      "slides": null
+    },
+    "fact_table": null,
+    "expected": {
+      "fact_count": 0,
+      "declared_fact_ids": [],
+      "missing_fact_ids": [],
+      "invalid_fact_ids": [],
+      "ungrounded_content_pages": [],
+      "fact_coverage": 0,
+      "structurally_valid": true,
+      "complete": false
+    }
+  }
+]

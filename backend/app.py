@@ -5,6 +5,7 @@ Routes:
   GET  /                      → Serve React frontend
   GET  /api/health             → Health check
   GET  /api/templates          → List available templates
+  POST /api/prepare-grounded-facts → Extract facts for user confirmation
   POST /api/generate-outline   → Generate outline (Sprint 1: mock data)
   POST /api/generate-pptx      → Render PPTX (Sprint 1: not implemented)
 """
@@ -19,7 +20,10 @@ from pydantic import ValidationError
 from config import FLASK_PORT, FLASK_DEBUG, FRONTEND_DIST, LOG_FILE, TEMPLATES_DIR
 from schema import (
     OutlineRequest,
+    GroundedFactPreparationRequest,
+    SlideRecommendationRequest,
     GenerateNotesRequest,
+    ArticleExportRequest,
     LyricsRequest,
     LLMSettingsRequest,
     LYRICS_LANGUAGE_OPTIONS,
@@ -32,17 +36,28 @@ from schema import (
     format_validation_errors,
 )
 from lyrics.chinese_script import ChineseScriptConversionUnavailableError, convert_text
+from article_export import build_article_export
+from image_search import rank_pixabay_hits
+from grounding_audit import audit_grounded_outline
+from slide_recommendation import recommend_from_material, recommend_slide_count
 from llm.client import (
     LLMReasoningOnlyError,
     LLMTimeoutError,
     LLMUnavailableError,
     OutlineGenerationError,
     check_llm_health,
+    build_grounded_fact_table,
     generate_article_text,
     generate_outline_text,
+    repair_grounded_outline_text,
     generate_speaker_notes,
 )
-from llm.outline_parser import OutlineParseError, OutlineValidationError, parse_outline
+from llm.outline_parser import (
+    OutlineParseError,
+    OutlineValidationError,
+    parse_outline,
+    validate_parsed_outline,
+)
 
 # === Logging ===
 logging.basicConfig(
@@ -159,6 +174,69 @@ def list_templates():
     return jsonify({"templates": templates})
 
 
+@app.route("/api/recommend-slides", methods=["POST"])
+def recommend_slides():
+    """Recommend a page count without making an extra LLM request."""
+    data = request.get_json(silent=True)
+    if data is None:
+        return error_response("请提供JSON数据", "JSON body required", 400)
+    try:
+        payload = SlideRecommendationRequest.model_validate(data)
+    except ValidationError as exc:
+        message_zh, message_en = format_validation_errors(exc)
+        return error_response(message_zh, message_en, 422)
+
+    recommendation = recommend_slide_count(
+        topic=payload.topic,
+        reference_text=payload.reference_text,
+        scenario=payload.scenario,
+        output_language=payload.output_language,
+    )
+    return jsonify({"success": True, **recommendation.to_dict()})
+
+
+@app.route("/api/prepare-grounded-facts", methods=["POST"])
+def prepare_grounded_facts():
+    """Extract source facts so the user can confirm the content boundary."""
+    data = request.get_json(silent=True)
+    if data is None:
+        return error_response("请提供JSON数据", "JSON body required", 400)
+    try:
+        payload = GroundedFactPreparationRequest.model_validate(data)
+    except ValidationError as exc:
+        message_zh, message_en = format_validation_errors(exc)
+        return error_response(message_zh, message_en, 422)
+
+    try:
+        fact_table = build_grounded_fact_table(
+            payload.reference_text,
+        )
+        if not fact_table:
+            return error_response(
+                "未能从参考材料提取可用事实，请检查材料内容或改用教学扩展模式。",
+                "No usable facts could be extracted. Check the source material or use creative mode.",
+                502,
+            )
+        return jsonify(
+            {
+                "success": True,
+                "fact_table": fact_table,
+                "fact_count": len(fact_table),
+                "fact_table_source": "extracted",
+            }
+        )
+    except Exception as exc:  # noqa: BLE001 - map known LLM errors, else 500
+        mapped = _llm_error_response(exc)
+        if mapped is not None:
+            return mapped
+        logger.exception("Unexpected error preparing grounded facts: %s", exc)
+        return error_response(
+            "提取材料事实时出现未知错误。",
+            "Unexpected error while extracting source facts.",
+            500,
+        )
+
+
 @app.route("/api/generate-outline", methods=["POST"])
 def generate_outline():
     """Generate an outline from a topic via the configured LLM."""
@@ -172,39 +250,193 @@ def generate_outline():
         message_zh, message_en = format_validation_errors(exc)
         return error_response(message_zh, message_en, 422)
 
+    recommendation = recommend_slide_count(
+        topic=payload.topic,
+        reference_text=payload.reference_text,
+        scenario=payload.scenario,
+        output_language=payload.output_language,
+    )
+    effective_slides = (
+        recommendation.recommended_slides
+        if payload.slide_count_mode == "auto"
+        else payload.num_slides
+    )
+
     logger.info(
-        "Generating outline: topic='%s', slides=%s, scenario=%s, language=%s, reference_chars=%s",
+        "Generating outline: topic='%s', slides=%s, scenario=%s, output_language=%s, "
+        "reference_chars=%s, mode=%s, slide_count_mode=%s",
         payload.topic,
-        payload.num_slides,
+        effective_slides,
         payload.scenario,
-        payload.language,
+        payload.output_language,
         len(payload.reference_text or ""),
+        payload.generation_mode,
+        payload.slide_count_mode,
     )
 
     try:
+        fact_table: list[dict] = []
+        fact_table_source = "none"
+        if payload.generation_mode == "grounded":
+            fact_table = [fact.model_dump() for fact in payload.fact_table or []]
+            fact_table_source = "confirmed"
+            if not fact_table:
+                return error_response(
+                    "未能从参考材料提取可用事实，请检查材料内容或改用教学创作模式。",
+                    "No usable facts could be extracted. Check the source material or use creative mode.",
+                    502,
+                )
+
         llm_result = generate_outline_text(
             topic=payload.topic,
-            num_slides=payload.num_slides,
+            num_slides=effective_slides,
             scenario=payload.scenario,
-            language=payload.language,
+            output_language=payload.output_language,
             reference_text=payload.reference_text,
+            temperature=0.2 if payload.generation_mode == "grounded" else None,
+            mode=payload.generation_mode,
+            fact_table=fact_table or None,
         )
-        parsed_result = parse_outline(llm_result.raw_text)
+        parsed_result = parse_outline(
+            llm_result.raw_text,
+            expected_slides=(
+                None
+                if payload.generation_mode == "grounded"
+                else effective_slides
+            ),
+            validate=payload.generation_mode != "grounded",
+        )
+        total_elapsed = llm_result.elapsed_seconds
+        result_for_response = llm_result
+        initial_slides = len(parsed_result.outline["slides"])
+        retry_attempted = False
+        retry_slides: int | None = None
+        retry_succeeded = False
+        initial_audit = (
+            audit_grounded_outline(parsed_result.outline, fact_table)
+            if payload.generation_mode == "grounded"
+            else None
+        )
+        final_audit = initial_audit
+
+        if payload.generation_mode == "grounded" and initial_slides != effective_slides:
+            retry_attempted = True
+            logger.warning(
+                "Grounded outline count mismatch; attempting one directed repair: "
+                "model=%s, requested=%s, coverage=%.3f",
+                initial_slides,
+                effective_slides,
+                initial_audit.fact_coverage if initial_audit else 0.0,
+            )
+            repair_result = repair_grounded_outline_text(
+                previous_outline=parsed_result.outline,
+                target_slides=effective_slides,
+                output_language=payload.output_language,
+                fact_table=fact_table,
+                missing_fact_ids=(
+                    initial_audit.missing_fact_ids if initial_audit else None
+                ),
+            )
+            repaired = parse_outline(
+                repair_result.raw_text,
+                expected_slides=None,
+                validate=False,
+            )
+            retry_slides = len(repaired.outline["slides"])
+            retry_succeeded = retry_slides == effective_slides
+            total_elapsed += repair_result.elapsed_seconds
+            result_for_response = repair_result
+            final_audit = audit_grounded_outline(repaired.outline, fact_table)
+            if not retry_succeeded:
+                generation_audit = {
+                    "recommended_slides": recommendation.recommended_slides,
+                    "requested_slides": effective_slides,
+                    "initial_slides": initial_slides,
+                    "retry_attempted": True,
+                    "retry_slides": retry_slides,
+                    "retry_succeeded": False,
+                    "initial_fact_coverage": initial_audit.fact_coverage,
+                    "final_fact_coverage": final_audit.fact_coverage,
+                    "fact_count": final_audit.fact_count,
+                    "declared_fact_ids": final_audit.declared_fact_ids,
+                    "missing_fact_ids": final_audit.missing_fact_ids,
+                    "invalid_fact_ids": final_audit.invalid_fact_ids,
+                    "ungrounded_content_pages": final_audit.ungrounded_content_pages,
+                }
+                logger.warning(
+                    "Grounded repair failed: requested=%s, initial=%s, retry=%s, "
+                    "coverage=%.3f",
+                    effective_slides,
+                    initial_slides,
+                    retry_slides,
+                    final_audit.fact_coverage,
+                )
+                return jsonify(
+                    {
+                        "success": False,
+                        "error": (
+                            f"严格材料模式要求 {effective_slides} 页；模型首次返回 "
+                            f"{initial_slides} 页，自动修复后仍为 {retry_slides} 页。"
+                            "为避免删除事实或编造内容，本次未自动裁页。"
+                        ),
+                        "error_en": (
+                            f"Grounded mode requested {effective_slides} slides; "
+                            f"the first result had {initial_slides} and the single repair "
+                            f"still had {retry_slides}. No slides were trimmed or invented."
+                        ),
+                        "generation_audit": generation_audit,
+                    }
+                ), 502
+            parsed_result = repaired
+
+        if payload.generation_mode == "grounded":
+            parsed_result = validate_parsed_outline(parsed_result)
+
+        generation_audit = None
+        if payload.generation_mode == "grounded" and final_audit is not None:
+            generation_audit = {
+                "recommended_slides": recommendation.recommended_slides,
+                "requested_slides": effective_slides,
+                "initial_slides": initial_slides,
+                "retry_attempted": retry_attempted,
+                "retry_slides": retry_slides,
+                "retry_succeeded": retry_succeeded,
+                "initial_fact_coverage": initial_audit.fact_coverage,
+                "final_fact_coverage": final_audit.fact_coverage,
+                "fact_count": final_audit.fact_count,
+                "declared_fact_ids": final_audit.declared_fact_ids,
+                "missing_fact_ids": final_audit.missing_fact_ids,
+                "invalid_fact_ids": final_audit.invalid_fact_ids,
+                "ungrounded_content_pages": final_audit.ungrounded_content_pages,
+            }
 
         response = {
             "success": True,
             "outline": parsed_result.outline,
-            "elapsed_seconds": round(llm_result.elapsed_seconds, 1),
-            "llm_model": llm_result.llm_model,
+            "elapsed_seconds": round(total_elapsed, 1),
+            "llm_model": result_for_response.llm_model,
+            "generation_mode": payload.generation_mode,
+            "fact_table": fact_table,
+            "fact_table_source": fact_table_source,
+            "slide_count_mode": payload.slide_count_mode,
+            "recommended_slides": recommendation.recommended_slides,
+            "effective_num_slides": effective_slides,
+            "slide_recommendation_reason": recommendation.reason,
         }
-        if parsed_result.warnings:
-            response["warnings"] = parsed_result.warnings
+        warnings = list(parsed_result.warnings)
+        if generation_audit is not None:
+            response["generation_audit"] = generation_audit
+        if warnings:
+            response["warnings"] = list(dict.fromkeys(warnings))
 
         logger.info(
-            "Outline generation complete: %s slides, %.1fs, warnings=%s",
+            "Outline generation complete: %s slides, %.1fs, retry=%s, "
+            "fact_coverage=%s, warnings=%s",
             len(parsed_result.outline["slides"]),
-            llm_result.elapsed_seconds,
-            len(parsed_result.warnings),
+            total_elapsed,
+            retry_attempted,
+            final_audit.fact_coverage if final_audit else None,
+            len(warnings),
         )
         return jsonify(response)
     except LLMUnavailableError as exc:
@@ -284,7 +516,7 @@ def _build_draft_response(payload, prior_article: str | None = None, correction:
         article_result = generate_article_text(
             topic=payload.topic,
             scenario=payload.scenario,
-            language=payload.language,
+            output_language=payload.output_language,
             reference_text=payload.reference_text,
             prior_article=prior_article,
             correction=correction,
@@ -293,16 +525,35 @@ def _build_draft_response(payload, prior_article: str | None = None, correction:
         if not article:
             return error_response("模型未生成文章内容，请重试。", "The model returned no article. Please retry.", 502)
 
+        if payload.reference_text:
+            recommendation = recommend_slide_count(
+                topic=payload.topic,
+                reference_text=payload.reference_text,
+                scenario=payload.scenario,
+                output_language=payload.output_language,
+            )
+        else:
+            recommendation = recommend_from_material(
+                article,
+                output_language=payload.output_language,
+                basis="generated_article",
+            )
+        effective_slides = (
+            recommendation.recommended_slides
+            if payload.slide_count_mode == "auto"
+            else payload.num_slides
+        )
+
         # Outline derived from the article — reuse the existing generator with the
         # article supplied as reference text (topic still steers intent).
         outline_result = generate_outline_text(
             topic=payload.topic,
-            num_slides=payload.num_slides,
+            num_slides=effective_slides,
             scenario=payload.scenario,
-            language=payload.language,
+            output_language=payload.output_language,
             reference_text=article,
         )
-        parsed = parse_outline(outline_result.raw_text)
+        parsed = parse_outline(outline_result.raw_text, expected_slides=effective_slides)
 
         response = {
             "success": True,
@@ -310,6 +561,12 @@ def _build_draft_response(payload, prior_article: str | None = None, correction:
             "outline": parsed.outline,
             "elapsed_seconds": round(article_result.elapsed_seconds + outline_result.elapsed_seconds, 1),
             "llm_model": outline_result.llm_model,
+            "generation_mode": "creative",
+            "fact_table": [],
+            "slide_count_mode": payload.slide_count_mode,
+            "recommended_slides": recommendation.recommended_slides,
+            "effective_num_slides": effective_slides,
+            "slide_recommendation_reason": recommendation.reason,
         }
         if parsed.warnings:
             response["warnings"] = parsed.warnings
@@ -355,13 +612,56 @@ def generate_draft():
 def refine_draft():
     """Regenerate the draft article + outline from a prior article and a correction prompt."""
     data = request.get_json(silent=True)
-    payload, err = _validate_outline_request(data)
+    outline_data = (
+        {key: value for key, value in data.items() if key not in {"prior_article", "correction"}}
+        if isinstance(data, dict)
+        else data
+    )
+    payload, err = _validate_outline_request(outline_data)
     if err is not None:
         return err
     prior_article = (data.get("prior_article") or "").strip() or None
     correction = (data.get("correction") or "").strip() or None
     logger.info("Refining draft: topic='%s', has_correction=%s", payload.topic, bool(correction))
     return _build_draft_response(payload, prior_article=prior_article, correction=correction)
+
+
+@app.route("/api/export-article", methods=["POST"])
+def export_article():
+    """Download the editable prep article as Markdown, DOCX, or ODT."""
+    from io import BytesIO
+    from flask import send_file
+
+    data = request.get_json(silent=True)
+    if data is None:
+        return error_response("请提供JSON数据", "JSON body required", 400)
+    try:
+        payload = ArticleExportRequest.model_validate(data)
+    except ValidationError as exc:
+        message_zh, message_en = format_validation_errors(exc)
+        return error_response(message_zh, message_en, 422)
+
+    try:
+        content, filename, mimetype = build_article_export(
+            payload.title,
+            payload.article,
+            payload.format,
+        )
+        buffer = BytesIO(content)
+        buffer.seek(0)
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=filename,
+            mimetype=mimetype,
+        )
+    except Exception as exc:
+        logger.exception("Unexpected error exporting prep article: %s", exc)
+        return error_response(
+            "导出备课文章时发生错误。",
+            "Error exporting prep article.",
+            500,
+        )
 
 
 def _parse_notes(raw_text: str) -> list[str] | None:
@@ -404,13 +704,36 @@ def generate_notes():
     if not isinstance(slides, list) or not slides:
         return error_response("请提供完整的大纲数据", "Outline data required", 400)
 
+    if payload.generation_mode == "grounded":
+        note_fact_table = [fact.model_dump() for fact in payload.fact_table]
+        note_audit = audit_grounded_outline(payload.outline, note_fact_table)
+        if (
+            note_audit.missing_fact_ids
+            or note_audit.invalid_fact_ids
+            or note_audit.ungrounded_content_pages
+        ):
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "请先完成逐页事实对应，再生成严格材料讲稿。",
+                    "error_en": (
+                        "Complete the per-slide fact mapping before generating "
+                        "grounded speaker notes."
+                    ),
+                    "grounding_audit": note_audit.to_dict(),
+                }
+            ), 422
+
     try:
         result = generate_speaker_notes(
             outline=payload.outline,
-            language=payload.language,
+            output_language=payload.output_language,
             duration_minutes=payload.duration,
             style=payload.style,
             article=payload.article,
+            temperature=0.2 if payload.generation_mode == "grounded" else None,
+            mode=payload.generation_mode,
+            fact_table=[fact.model_dump() for fact in payload.fact_table] or None,
         )
     except Exception as exc:  # noqa: BLE001 - map known LLM errors, else 500
         mapped = _llm_error_response(exc)
@@ -439,7 +762,12 @@ def generate_notes():
             parsed = parsed[:count]
 
     logger.info("Speaker notes generated: %s slides, %.1fs, warnings=%s", count, result.elapsed_seconds, len(warnings))
-    response = {"success": True, "notes": parsed, "elapsed_seconds": round(result.elapsed_seconds, 1)}
+    response = {
+        "success": True,
+        "notes": parsed,
+        "elapsed_seconds": round(result.elapsed_seconds, 1),
+        "generation_mode": payload.generation_mode,
+    }
     if warnings:
         response["warnings"] = warnings
     return jsonify(response)
@@ -787,15 +1115,18 @@ def search_images():
         # Translate Chinese/non-English query to English for better search results
         from llm.client import translate_to_english
         translated_query = translate_to_english(query)
-        lang = "en" if translated_query != query else "zh"
+        lang = "en" if translated_query.isascii() else "zh"
 
         base_url = "https://pixabay.com/api/?"
         params = {
             "key": api_key,
             "q": translated_query,
-            "image_type": "photo",
-            "per_page": 12,
-            "lang": lang
+            "image_type": "all",
+            "orientation": "horizontal",
+            "safesearch": "true",
+            "order": "popular",
+            "per_page": 48,
+            "lang": lang,
         }
         url = base_url + urllib.parse.urlencode(params)
         
@@ -813,7 +1144,7 @@ def search_images():
         with urllib.request.urlopen(req, context=ctx, timeout=10) as response:
             res_data = json.loads(response.read().decode('utf-8'))
             
-        hits = res_data.get("hits", [])
+        hits = rank_pixabay_hits(res_data.get("hits", []), translated_query, limit=12)
         images = []
         for hit in hits:
             images.append({
@@ -826,7 +1157,8 @@ def search_images():
             
         return jsonify({
             "success": True,
-            "images": images
+            "images": images,
+            "search_query": translated_query,
         })
     except urllib.error.HTTPError as exc:
         try:

@@ -22,7 +22,12 @@ def _outline():
 
 class TestNotesPrompt(unittest.TestCase):
     def test_includes_duration_style_language(self):
-        messages = build_notes_messages(_outline(), language="zh", duration_minutes=10, style="classroom")
+        messages = build_notes_messages(
+            _outline(),
+            output_language="zh",
+            duration_minutes=10,
+            style="classroom",
+        )
         system, user = messages[0]["content"], messages[1]["content"]
         self.assertIn("课堂讲解", system)   # style hint
         self.assertIn("10 分钟", user)       # duration budget
@@ -30,9 +35,34 @@ class TestNotesPrompt(unittest.TestCase):
 
     def test_article_included_when_present(self):
         messages = build_notes_messages(
-            _outline(), language="zh", duration_minutes=5, style="formal", article="文章内容XYZ"
+            _outline(),
+            output_language="zh",
+            duration_minutes=5,
+            style="formal",
+            article="文章内容XYZ",
         )
         self.assertIn("文章内容XYZ", messages[1]["content"])
+
+    def test_grounded_notes_include_per_slide_fact_mapping(self):
+        outline = _outline()
+        outline["slides"][0]["fact_ids"] = [1]
+        outline["slides"][1]["fact_ids"] = [2, 3]
+        outline["slides"][2]["fact_ids"] = [3]
+        messages = build_notes_messages(
+            outline,
+            output_language="zh",
+            duration_minutes=10,
+            style="classroom",
+            mode="grounded",
+            fact_table=[
+                {"id": 1, "text": "事实一"},
+                {"id": 2, "text": "事实二"},
+                {"id": 3, "text": "事实三"},
+            ],
+        )
+        system, user = messages[0]["content"], messages[1]["content"]
+        self.assertIn("每页只能展开该页标注的【事实编号】", system)
+        self.assertIn("第2页 [content] 内容：x；y；z；事实编号：2、3", user)
 
     def test_reasoning_salvage_for_notes(self):
         text = 'think... {"notes":["n1","n2"]} end'
@@ -76,7 +106,12 @@ class TestNotesEndpoint(unittest.TestCase):
         self.client = app.app.test_client()
 
     def _body(self, **over):
-        body = {"outline": _outline(), "language": "zh", "duration": 10, "style": "classroom"}
+        body = {
+            "outline": _outline(),
+            "output_language": "zh",
+            "duration": 10,
+            "style": "classroom",
+        }
         body.update(over)
         return body
 
@@ -98,6 +133,31 @@ class TestNotesEndpoint(unittest.TestCase):
         with patch.object(self.app_module, "generate_speaker_notes", return_value=self._fake("not json")):
             resp = self.client.post("/api/generate-notes", json=self._body())
         self.assertEqual(resp.status_code, 502)
+
+    def test_grounded_notes_reject_incomplete_fact_mapping(self):
+        from unittest.mock import patch
+
+        outline = _outline()
+        outline["slides"][0]["fact_ids"] = [1]
+        outline["slides"][1]["fact_ids"] = []
+        outline["slides"][2]["fact_ids"] = [1]
+        with patch.object(self.app_module, "generate_speaker_notes") as generate:
+            resp = self.client.post(
+                "/api/generate-notes",
+                json=self._body(
+                    outline=outline,
+                    generation_mode="grounded",
+                    fact_table=[
+                        {"id": 1, "text": "事实一"},
+                        {"id": 2, "text": "事实二"},
+                    ],
+                ),
+            )
+        self.assertEqual(resp.status_code, 422)
+        audit = resp.get_json()["grounding_audit"]
+        self.assertEqual(audit["missing_fact_ids"], [2])
+        self.assertEqual(audit["ungrounded_content_pages"], [2])
+        generate.assert_not_called()
 
     def test_length_mismatch_warns(self):
         from unittest.mock import patch

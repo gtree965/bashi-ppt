@@ -18,6 +18,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from schema import OutlineData, SLIDE_CONSTRAINTS, format_validation_errors
+from text_constraints import fits_display_limit, truncate_to_display_limit
 
 try:
     from json_repair import repair_json
@@ -110,7 +111,41 @@ def _normalize_slide_type(index: int, total: int, raw_type: Any) -> tuple[str, s
     return expected, None
 
 
-def _normalize_outline(outline: dict[str, Any]) -> ParsedOutlineResult:
+def _reconcile_slide_count(
+    slides: list[dict[str, Any]], expected: int | None, warnings: list[str]
+) -> list[dict[str, Any]]:
+    """Force the slide count to the requested number when possible.
+
+    Models do not reliably honour an exact page count, so we enforce it here
+    rather than trusting the prompt. Surplus slides are trimmed from the end of
+    the *content* block (title and conclusion are always kept, and at least one
+    content slide remains). A shortfall is only flagged — fabricating slides is
+    worse than a short deck — so callers may choose to re-request.
+    """
+    if not expected or len(slides) == expected:
+        return slides
+
+    if len(slides) > expected:
+        surplus = len(slides) - expected
+        content_positions = [i for i, s in enumerate(slides) if s.get("slide_type") == "content"]
+        n_remove = min(surplus, max(len(content_positions) - 1, 0))
+        remove_set = set(content_positions[len(content_positions) - n_remove:]) if n_remove else set()
+        if remove_set:
+            slides = [s for i, s in enumerate(slides) if i not in remove_set]
+            warnings.append(f"Trimmed {len(remove_set)} extra slide(s) to match requested {expected} pages")
+        if len(slides) != expected:
+            warnings.append(f"Outline has {len(slides)} slides but {expected} were requested")
+    else:
+        warnings.append(f"Model produced only {len(slides)} slides but {expected} were requested")
+
+    for index, slide in enumerate(slides, start=1):
+        slide["page_number"] = index
+    return slides
+
+
+def _normalize_outline(
+    outline: dict[str, Any], expected_slides: int | None = None
+) -> ParsedOutlineResult:
     warnings: list[str] = []
     cleaned = _remove_forbidden_fields(outline, warnings)
 
@@ -119,9 +154,9 @@ def _normalize_outline(outline: dict[str, Any]) -> ParsedOutlineResult:
 
     title = str(cleaned.get("title", "")).strip()
     if title:
-        if len(title) > 50:
-            title = title[:50].rstrip()
-            warnings.append("Trimmed presentation title to 50 characters")
+        if not fits_display_limit(title, 50):
+            title = truncate_to_display_limit(title, 50)
+            warnings.append("Trimmed presentation title at a safe word boundary")
     else:
         raise OutlineValidationError("Outline title is missing.")
 
@@ -146,8 +181,11 @@ def _normalize_outline(outline: dict[str, Any]) -> ParsedOutlineResult:
 
         constraints = SLIDE_CONSTRAINTS[slide_type]
         slide_title = str(slide.get("title", "")).strip()
-        if len(slide_title) > constraints["max_title_length"]:
-            slide_title = slide_title[: constraints["max_title_length"]].rstrip()
+        if not fits_display_limit(slide_title, constraints["max_title_length"]):
+            slide_title = truncate_to_display_limit(
+                slide_title,
+                constraints["max_title_length"],
+            )
             warnings.append(f"Trimmed title on slide {index + 1}")
 
         raw_points = slide.get("content_points", [])
@@ -177,8 +215,11 @@ def _normalize_outline(outline: dict[str, Any]) -> ParsedOutlineResult:
             text = str(point).strip()
             if not text:
                 continue
-            if len(text) > constraints["max_point_length"]:
-                text = text[: constraints["max_point_length"]].rstrip()
+            if not fits_display_limit(text, constraints["max_point_length"]):
+                text = truncate_to_display_limit(
+                    text,
+                    constraints["max_point_length"],
+                )
                 warnings.append(f"Trimmed an overlong point on slide {index + 1}")
             normalized_points.append(text)
 
@@ -194,6 +235,22 @@ def _normalize_outline(outline: dict[str, Any]) -> ParsedOutlineResult:
             "slide_type": slide_type,
         }
 
+        raw_fact_ids = slide.get("fact_ids", [])
+        if raw_fact_ids is not None:
+            if not isinstance(raw_fact_ids, list):
+                warnings.append(f"Ignored invalid fact_ids on slide {index + 1}")
+            else:
+                fact_ids: list[int] = []
+                for value in raw_fact_ids:
+                    if isinstance(value, int) and 1 <= value <= 1000:
+                        if value not in fact_ids:
+                            fact_ids.append(value)
+                    else:
+                        warnings.append(
+                            f"Ignored invalid fact ID on slide {index + 1}"
+                        )
+                normalized_slide["fact_ids"] = fact_ids
+
         # Preserve an optional LLM-suggested Mermaid diagram on content slides.
         # The rest of the slide dict is rebuilt from scratch above, so any field
         # not copied here is silently dropped (this is why image_url, added later
@@ -204,6 +261,8 @@ def _normalize_outline(outline: dict[str, Any]) -> ParsedOutlineResult:
 
         normalized_slides.append(normalized_slide)
 
+    normalized_slides = _reconcile_slide_count(normalized_slides, expected_slides, warnings)
+
     normalized_outline = {
         "title": title,
         "slides": normalized_slides,
@@ -212,8 +271,31 @@ def _normalize_outline(outline: dict[str, Any]) -> ParsedOutlineResult:
     return ParsedOutlineResult(outline=normalized_outline, warnings=list(dict.fromkeys(warnings)))
 
 
-def parse_outline(raw_text: str) -> ParsedOutlineResult:
-    """Parse, repair, normalize, and validate outline JSON."""
+def validate_parsed_outline(result: ParsedOutlineResult) -> ParsedOutlineResult:
+    """Apply the strict product schema after any grounded count repair."""
+    try:
+        validated = OutlineData.model_validate(result.outline)
+    except ValidationError as exc:
+        message_zh, message_en = format_validation_errors(exc)
+        raise OutlineValidationError(f"{message_en} / {message_zh}") from exc
+    return ParsedOutlineResult(
+        outline=validated.model_dump(),
+        warnings=result.warnings,
+    )
+
+
+def parse_outline(
+    raw_text: str,
+    expected_slides: int | None = None,
+    *,
+    validate: bool = True,
+) -> ParsedOutlineResult:
+    """Parse, repair, normalize, and validate outline JSON.
+
+    ``expected_slides`` (the user's requested page count) is enforced
+    programmatically — see :func:`_reconcile_slide_count` — because models do
+    not reliably honour an exact count from the prompt alone.
+    """
     if not raw_text or not raw_text.strip():
         raise OutlineParseError("Model returned empty text.")
 
@@ -246,15 +328,5 @@ def parse_outline(raw_text: str) -> ParsedOutlineResult:
     if parsed_data is None:
         raise OutlineParseError("Unable to parse JSON outline. " + " | ".join(parse_errors))
 
-    normalized = _normalize_outline(parsed_data)
-
-    try:
-        validated = OutlineData.model_validate(normalized.outline)
-    except ValidationError as exc:
-        message_zh, message_en = format_validation_errors(exc)
-        raise OutlineValidationError(f"{message_en} / {message_zh}") from exc
-
-    return ParsedOutlineResult(
-        outline=validated.model_dump(),
-        warnings=normalized.warnings,
-    )
+    normalized = _normalize_outline(parsed_data, expected_slides=expected_slides)
+    return validate_parsed_outline(normalized) if validate else normalized

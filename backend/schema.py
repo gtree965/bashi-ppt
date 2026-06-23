@@ -7,6 +7,7 @@ Imported by: prompts.py, outline_parser.py, frontend OutlineEditor, renderer eng
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from text_constraints import fits_display_limit, limit_description
 
 # =====================================================================
 # Slide constraints (used by LLM prompts, validation, and frontend)
@@ -20,7 +21,9 @@ SLIDE_CONSTRAINTS = {
         "max_title_length": 25,
     },
     "content": {
-        "min_points": 3,
+        # The data model accepts sparse strict-material slides. Creative prompts
+        # and the default editor still ask for at least three points.
+        "min_points": 1,
         "max_points": 5,
         "max_point_length": 25,   # characters
         "max_title_length": 20,
@@ -42,6 +45,8 @@ OUTLINE_CONSTRAINTS = {
 
 ScenarioType = Literal["teaching", "church", "parents", "general"]
 LanguageType = Literal["zh", "en", "bilingual"]
+GenerationMode = Literal["creative", "grounded"]
+SlideCountMode = Literal["auto", "manual"]
 
 VALID_SCENARIOS = ("teaching", "church", "parents", "general")
 VALID_LANGUAGES = ("zh", "en", "bilingual")
@@ -54,9 +59,14 @@ class SlideData(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     page_number: int = Field(ge=1, le=OUTLINE_CONSTRAINTS["max_slides"])
-    title: str = Field(min_length=1, max_length=30)
+    title: str = Field(min_length=1, max_length=160)
     content_points: List[str] = Field(min_length=1, max_length=5)
     slide_type: Literal["title", "content", "conclusion"]
+    fact_ids: List[int] = Field(
+        default_factory=list,
+        max_length=80,
+        description="Confirmed source-fact IDs declared for this slide",
+    )
     image_url: Optional[str] = Field(default=None, description="Optional image URL for the slide")
     diagram: Optional[str] = Field(default=None, description="Optional Mermaid diagram code (content slides only)")
     diagram_steps: Optional[str] = Field(default=None, description="Optional newline-separated steps the user typed; the UI builds `diagram` from these")
@@ -75,13 +85,25 @@ class SlideData(BaseModel):
                 normalized.append(text)
         return normalized
 
+    @field_validator("fact_ids")
+    @classmethod
+    def normalize_fact_ids(cls, value: List[int]) -> List[int]:
+        normalized: list[int] = []
+        for fact_id in value:
+            if fact_id < 1 or fact_id > 1000:
+                raise ValueError("fact IDs must be between 1 and 1000")
+            if fact_id not in normalized:
+                normalized.append(fact_id)
+        return normalized
+
     @model_validator(mode="after")
     def validate_slide_constraints(self):
         constraints = SLIDE_CONSTRAINTS[self.slide_type]
 
-        if len(self.title) > constraints["max_title_length"]:
+        if not fits_display_limit(self.title, constraints["max_title_length"]):
             raise ValueError(
-                f"{self.slide_type} slide title exceeds {constraints['max_title_length']} characters"
+                f"{self.slide_type} slide title exceeds "
+                f"{limit_description(constraints['max_title_length'], 'bilingual')}"
             )
 
         point_count = len(self.content_points)
@@ -92,9 +114,10 @@ class SlideData(BaseModel):
             )
 
         for point in self.content_points:
-            if len(point) > constraints["max_point_length"]:
+            if not fits_display_limit(point, constraints["max_point_length"]):
                 raise ValueError(
-                    f"{self.slide_type} slide point exceeds {constraints['max_point_length']} characters"
+                    f"{self.slide_type} slide point exceeds "
+                    f"{limit_description(constraints['max_point_length'], 'bilingual')}"
                 )
 
         return self
@@ -103,7 +126,7 @@ class SlideData(BaseModel):
 class OutlineData(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    title: str = Field(min_length=1, max_length=50)
+    title: str = Field(min_length=1, max_length=240)
     slides: List[SlideData] = Field(min_length=4, max_length=15)
 
     @model_validator(mode="after")
@@ -131,8 +154,16 @@ class OutlineData(BaseModel):
         return self
 
 
-class OutlineRequest(BaseModel):
+class FactItem(BaseModel):
+    """One auditable source fact used by strict-material generation."""
     model_config = ConfigDict(str_strip_whitespace=True)
+
+    id: int = Field(ge=1, le=1000)
+    text: str = Field(min_length=1, max_length=1000)
+
+
+class OutlineRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     topic: str = Field(min_length=0, max_length=200, default="")
     reference_text: str | None = Field(default=None, max_length=6000)
@@ -142,7 +173,48 @@ class OutlineRequest(BaseModel):
         le=OUTLINE_CONSTRAINTS["max_slides"],
     )
     scenario: ScenarioType = Field(default="general")
-    language: LanguageType = Field(default="zh")
+    output_language: LanguageType = Field(default="zh")
+    generation_mode: GenerationMode = Field(default="creative")
+    slide_count_mode: SlideCountMode = Field(default="manual")
+    fact_table: Optional[List[FactItem]] = Field(default=None, max_length=80)
+
+    @field_validator("reference_text")
+    @classmethod
+    def normalize_reference_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None
+
+    @model_validator(mode="after")
+    def validate_content_provided(self):
+        if not self.topic.strip() and not self.reference_text:
+            raise ValueError("Must provide either a topic or reference text")
+        if self.generation_mode == "grounded" and not self.reference_text:
+            raise ValueError("Grounded mode requires reference text")
+        if self.generation_mode == "grounded" and not self.fact_table:
+            raise ValueError("Grounded mode requires a user-confirmed fact table")
+        if self.fact_table is not None:
+            if self.generation_mode != "grounded":
+                raise ValueError("A fact table can only be used in grounded mode")
+            fact_ids = [fact.id for fact in self.fact_table]
+            if len(fact_ids) != len(set(fact_ids)):
+                raise ValueError("Fact IDs must be unique")
+        return self
+
+
+class GroundedFactPreparationRequest(BaseModel):
+    """Request for extracting an auditable fact table before outline generation."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    reference_text: str = Field(min_length=1, max_length=6000)
+class SlideRecommendationRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    topic: str = Field(min_length=0, max_length=200, default="")
+    reference_text: str | None = Field(default=None, max_length=6000)
+    scenario: ScenarioType = Field(default="general")
+    output_language: LanguageType = Field(default="zh")
 
     @field_validator("reference_text")
     @classmethod
@@ -174,9 +246,26 @@ class GenerateNotesRequest(BaseModel):
 
     outline: dict
     article: str | None = Field(default=None, max_length=8000)
-    language: LanguageType = Field(default="zh")
+    output_language: LanguageType = Field(default="zh")
     duration: Literal[5, 10, 20, 30, 45, 60] = Field(default=10)
     style: Literal["classroom", "sundayschool", "parents", "formal"] = Field(default="formal")
+    generation_mode: GenerationMode = Field(default="creative")
+    fact_table: List[FactItem] = Field(default_factory=list, max_length=80)
+
+    @model_validator(mode="after")
+    def validate_grounded_notes(self):
+        if self.generation_mode == "grounded" and not self.fact_table:
+            raise ValueError("Grounded notes require a fact table")
+        return self
+
+
+class ArticleExportRequest(BaseModel):
+    """Validated payload for exporting the editable prep article."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    title: str = Field(default="备课文章", max_length=200)
+    article: str = Field(min_length=1, max_length=20000)
+    format: Literal["md", "docx", "odt"] = Field(default="md")
 
 
 # =====================================================================
@@ -319,8 +408,12 @@ def format_validation_errors(exc: ValidationError) -> tuple[str, str]:
         field_zh = {
             "topic": "主题",
             "reference_text": "参考文章",
+            "generation_mode": "材料使用方式",
+            "slide_count_mode": "页数设置方式",
+            "fact_table": "材料事实",
             "num_slides": "页数",
             "scenario": "场景",
+            "output_language": "PPT输出语言",
             "language": "语言",
             "lyrics": "歌词",
             "outline": "大纲",
@@ -343,8 +436,12 @@ def format_validation_errors(exc: ValidationError) -> tuple[str, str]:
         field_en = {
             "topic": "topic",
             "reference_text": "reference article",
+            "generation_mode": "material mode",
+            "slide_count_mode": "slide count mode",
+            "fact_table": "source facts",
             "num_slides": "slide count",
             "scenario": "scenario",
+            "output_language": "PPT output language",
             "language": "language",
             "lyrics": "lyrics",
             "outline": "outline",
@@ -372,9 +469,9 @@ def format_validation_errors(exc: ValidationError) -> tuple[str, str]:
             if field == "scenario":
                 zh_messages.append("场景必须是 teaching、church、parents 或 general")
                 en_messages.append("scenario must be one of teaching, church, parents, or general")
-            elif field == "language":
-                zh_messages.append("语言必须是 zh、en 或 bilingual")
-                en_messages.append("language must be one of zh, en, or bilingual")
+            elif field in {"language", "output_language"}:
+                zh_messages.append("输出语言必须是 zh、en 或 bilingual")
+                en_messages.append("output language must be one of zh, en, or bilingual")
             else:
                 zh_messages.append(f"{field_zh}包含无效值")
                 en_messages.append(f"{field_en} contains an invalid value")

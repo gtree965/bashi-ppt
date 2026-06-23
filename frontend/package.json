@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test:grounding-audit": "node --test src/utils/groundingAudit.contract.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { recommendSlides } from '../api/client';
 
 const SCENARIOS = [
   { value: 'teaching', label: '课堂教学', note: '自动套用课堂模板' },
@@ -8,9 +9,9 @@ const SCENARIOS = [
 ];
 
 const LANGUAGES = [
-  { value: 'zh', label: '中文' },
+  { value: 'zh', label: '简体中文' },
   { value: 'en', label: 'English' },
-  { value: 'bilingual', label: '双语' },
+  { value: 'bilingual', label: '中英双语' },
 ];
 
 const MAX_REFERENCE_TEXT = 6000;
@@ -21,14 +22,31 @@ function formatElapsed(seconds) {
   return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
 }
 
-export default function TopicInput({ onSubmit, isLoading }) {
-  const [topic, setTopic] = useState('');
-  const [referenceText, setReferenceText] = useState('');
-  const [numSlides, setNumSlides] = useState(8);
-  const [scenario, setScenario] = useState('teaching');
-  const [language, setLanguage] = useState('zh');
+export default function TopicInput({
+  onSubmit,
+  isLoading,
+  initialValues = null,
+  loadingStage = 'outline',
+}) {
+  const [topic, setTopic] = useState(initialValues?.topic || '');
+  const [referenceText, setReferenceText] = useState(initialValues?.referenceText || '');
+  const [numSlides, setNumSlides] = useState(initialValues?.numSlides || 8);
+  const [slideCountMode, setSlideCountMode] = useState(initialValues?.slideCountMode || 'auto');
+  const [slideRecommendation, setSlideRecommendation] = useState({
+    recommended_slides: initialValues?.numSlides || 8,
+    basis: 'topic_scope',
+    reason: '输入主题或参考材料后，系统会自动建议页数。',
+  });
+  const [recommendationBusy, setRecommendationBusy] = useState(false);
+  const [scenario, setScenario] = useState(initialValues?.scenario || 'teaching');
+  const [outputLanguage, setOutputLanguage] = useState(
+    initialValues?.outputLanguage || 'zh'
+  );
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [draftFirst, setDraftFirst] = useState(false);
+  const [draftFirst, setDraftFirst] = useState(initialValues?.draftFirst || false);
+  const [strictMaterial, setStrictMaterial] = useState(
+    initialValues ? initialValues.generationMode === 'grounded' : true
+  );
   const [wasLoading, setWasLoading] = useState(isLoading);
 
   // Reset the timer whenever loading starts/stops. Done during render (React's
@@ -50,6 +68,50 @@ export default function TopicInput({ onSubmit, isLoading }) {
     return () => window.clearInterval(intervalId);
   }, [isLoading]);
 
+  useEffect(() => {
+    const cleanTopic = topic.trim();
+    const cleanReference = referenceText.trim();
+    if (!cleanTopic && !cleanReference) {
+      setRecommendationBusy(false);
+      setSlideRecommendation({
+        recommended_slides: 8,
+        basis: 'topic_scope',
+        reason: '输入主题或参考材料后，系统会自动建议页数。',
+      });
+      if (slideCountMode === 'auto') setNumSlides(8);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setRecommendationBusy(true);
+      try {
+        const data = await recommendSlides({
+          topic: cleanTopic,
+          referenceText: cleanReference,
+          scenario,
+          outputLanguage,
+          signal: controller.signal,
+        });
+        setSlideRecommendation(data);
+        if (slideCountMode === 'auto') {
+          setNumSlides(data.recommended_slides);
+        }
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          // Keep the previous recommendation; generation remains available.
+        }
+      } finally {
+        if (!controller.signal.aborted) setRecommendationBusy(false);
+      }
+    }, 450);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [topic, referenceText, scenario, outputLanguage, slideCountMode]);
+
   // The draft-article step only makes sense for topic-only input (AI invents an
   // article to review). If any reference text is present the user already has source
   // material, so the toggle is hidden and draft-first is never triggered.
@@ -64,8 +126,10 @@ export default function TopicInput({ onSubmit, isLoading }) {
       referenceText: referenceText.trim(),
       numSlides,
       scenario,
-      language,
+      outputLanguage,
       draftFirst: showDraftToggle ? draftFirst : false,
+      generationMode: referenceText.trim() && strictMaterial ? 'grounded' : 'creative',
+      slideCountMode,
     });
   };
 
@@ -76,10 +140,10 @@ export default function TopicInput({ onSubmit, isLoading }) {
           Outline Studio
         </div>
         <h2 className="mt-4 text-2xl font-semibold text-bashi-text md:text-3xl">
-          输入主题，或贴一篇参考文章给 AI 提炼
+          输入主题，或粘贴参考材料给 AI 提炼
         </h2>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-bashi-text-secondary md:text-base">
-          巴适PPT会先生成可编辑大纲，再渲染成 PPTX。教会场景自动使用教会模板，其它场景自动使用课堂模板，避免再让你做多一步选择。
+          可直接生成可编辑大纲，也可先生成备课文章确认内容方向，再渲染成 PPTX。
         </p>
       </div>
 
@@ -99,10 +163,28 @@ export default function TopicInput({ onSubmit, isLoading }) {
           />
         </div>
 
+        {showDraftToggle && (
+          <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-bashi-border bg-black/20 px-4 py-3 text-sm text-bashi-text-secondary">
+            <input
+              type="checkbox"
+              checked={draftFirst}
+              onChange={(event) => setDraftFirst(event.target.checked)}
+              disabled={isLoading}
+              className="mt-0.5 accent-bashi-copper"
+            />
+            <span>
+              先生成备课文章，再生成大纲
+              <span className="mt-0.5 block text-xs leading-5 text-bashi-text-muted">
+                适合只有主题时：先确认和修改内容方向，再生成 PPT 大纲。
+              </span>
+            </span>
+          </label>
+        )}
+
         <div>
           <div className="mb-2 flex items-center justify-between gap-3">
             <label className="block text-sm font-medium text-bashi-text">
-              参考文章 Reference Article
+              已有参考材料（可选） Source Material
             </label>
             <span className="text-xs text-bashi-text-muted">
               {referenceText.length} / {MAX_REFERENCE_TEXT}
@@ -116,8 +198,46 @@ export default function TopicInput({ onSubmit, isLoading }) {
             disabled={isLoading}
           />
           <p className="mt-2 text-xs leading-5 text-bashi-text-muted">
-            这不是必填项。建议粘贴关键段落或讲义内容，不必贴整本书。
+            这不是必填项。材料会发送给“AI 模型设置”中当前连接的服务；
+            请先删除学生、会友或其他人员的敏感信息。
           </p>
+          {referenceText.trim() && (
+            <div className="mt-3 rounded-2xl border border-bashi-border bg-black/20 p-4">
+              <div className="text-sm font-medium text-bashi-text">材料使用方式</div>
+              <label className="mt-3 flex cursor-pointer items-start gap-3 text-sm text-bashi-text-secondary">
+                <input
+                  type="radio"
+                  name="materialMode"
+                  checked={strictMaterial}
+                  onChange={() => setStrictMaterial(true)}
+                  disabled={isLoading}
+                  className="mt-0.5 accent-bashi-copper"
+                />
+                <span>
+                  严格依据材料
+                  <span className="mt-0.5 block text-xs leading-5 text-bashi-text-muted">
+                    只整理、压缩和重组材料中的事实，不主动补充背景、例子或结论。
+                  </span>
+                </span>
+              </label>
+              <label className="mt-3 flex cursor-pointer items-start gap-3 text-sm text-bashi-text-secondary">
+                <input
+                  type="radio"
+                  name="materialMode"
+                  checked={!strictMaterial}
+                  onChange={() => setStrictMaterial(false)}
+                  disabled={isLoading}
+                  className="mt-0.5 accent-bashi-copper"
+                />
+                <span>
+                  允许教学扩展
+                  <span className="mt-0.5 block text-xs leading-5 text-bashi-text-muted">
+                    将材料作为参考，允许 AI 补充教学性背景、例子和过渡内容。
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
         </div>
 
         <div>
@@ -154,7 +274,9 @@ export default function TopicInput({ onSubmit, isLoading }) {
           </label>
           <div className="rounded-2xl border border-bashi-border bg-black/20 px-4 py-4">
             <div className="mb-3 flex items-center justify-between text-sm text-bashi-text-secondary">
-              <span>根据内容长度自动生成更合适的结构</span>
+              <span>
+                {slideCountMode === 'auto' ? '系统建议，可手动覆盖' : '已手动覆盖系统建议'}
+              </span>
               <span className="text-lg font-semibold text-bashi-copper">{numSlides} 页</span>
             </div>
             <input
@@ -162,7 +284,10 @@ export default function TopicInput({ onSubmit, isLoading }) {
               min={4}
               max={15}
               value={numSlides}
-              onChange={(event) => setNumSlides(Number(event.target.value))}
+              onChange={(event) => {
+                setNumSlides(Number(event.target.value));
+                setSlideCountMode('manual');
+              }}
               disabled={isLoading}
               className="w-full"
             />
@@ -170,27 +295,51 @@ export default function TopicInput({ onSubmit, isLoading }) {
               <span>4</span>
               <span>15</span>
             </div>
+            <div className="mt-3 flex flex-col gap-2 border-t border-white/5 pt-3 text-xs leading-5 text-bashi-text-muted sm:flex-row sm:items-start sm:justify-between">
+              <span className="max-w-xl">
+                {recommendationBusy
+                  ? '正在重新计算建议页数…'
+                  : slideRecommendation.reason}
+              </span>
+              {slideCountMode === 'manual' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSlideCountMode('auto');
+                    setNumSlides(slideRecommendation.recommended_slides);
+                  }}
+                  disabled={isLoading}
+                  className="shrink-0 text-left font-medium text-bashi-copper hover:text-bashi-text disabled:opacity-40"
+                >
+                  恢复推荐 {slideRecommendation.recommended_slides} 页
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
         <div>
           <label className="mb-3 block text-sm font-medium text-bashi-text">
-            语言 Language
+            PPT 输出语言 Output Language
           </label>
+          <p className="mb-3 text-xs leading-5 text-bashi-text-muted">
+            输入材料可以是中文、英文或中英混合；这里决定生成的 PPT 使用哪种语言。
+            其他输入语言目前属于实验性支持。
+          </p>
           <div className="flex flex-wrap gap-3">
             {LANGUAGES.map((item) => (
               <label
                 key={item.value}
                 className={`bashi-pill rounded-full px-4 py-2 ${
-                  language === item.value ? 'active' : ''
+                  outputLanguage === item.value ? 'active' : ''
                 } ${isLoading ? 'pointer-events-none opacity-60' : ''}`}
               >
                 <input
                   type="radio"
-                  name="language"
+                  name="outputLanguage"
                   value={item.value}
-                  checked={language === item.value}
-                  onChange={(event) => setLanguage(event.target.value)}
+                  checked={outputLanguage === item.value}
+                  onChange={(event) => setOutputLanguage(event.target.value)}
                   disabled={isLoading}
                   className="sr-only"
                 />
@@ -202,32 +351,20 @@ export default function TopicInput({ onSubmit, isLoading }) {
       </div>
 
       <div className="mt-8 space-y-4">
-        {showDraftToggle && (
-          <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-bashi-border bg-black/20 px-4 py-3 text-sm text-bashi-text-secondary">
-            <input
-              type="checkbox"
-              checked={draftFirst}
-              onChange={(event) => setDraftFirst(event.target.checked)}
-              disabled={isLoading}
-              className="mt-0.5 accent-bashi-copper"
-            />
-            <span>
-              先生成参考文章，确认后再生成大纲
-              <span className="mt-0.5 block text-xs text-bashi-text-muted">
-                Draft an article first, then the outline — lets you review/correct the direction before the PPT.
-              </span>
-            </span>
-          </label>
-        )}
-
         <button
           type="submit"
           disabled={(!topic.trim() && !referenceText.trim()) || isLoading}
           className="bashi-btn-primary w-full rounded-2xl px-6 py-4 text-lg font-semibold"
         >
           {isLoading
-            ? (draftFirst && showDraftToggle ? '正在生成文章...' : '正在生成大纲...')
-            : (draftFirst && showDraftToggle ? '生成参考文章 Draft Article' : '生成大纲 Generate Outline')}
+            ? (loadingStage === 'facts'
+                ? '正在提取必须保留的事实...'
+                : (draftFirst && showDraftToggle
+                  ? '正在生成备课文章...'
+                  : (referenceText.trim() && strictMaterial
+                      ? '正在提取事实并生成大纲...'
+                      : '正在生成大纲...')))
+            : (draftFirst && showDraftToggle ? '生成备课文章 Prep Article' : '生成大纲 Generate Outline')}
         </button>
 
         {isLoading && (
@@ -240,7 +377,13 @@ export default function TopicInput({ onSubmit, isLoading }) {
               <div className="bashi-progress-indeterminate" />
             </div>
             <div className="mt-3 text-sm leading-6 text-bashi-text-secondary">
-              正在生成 outline。云端模型通常在十几秒内完成，本地模型可能需要几分钟。进度条仅表示“仍在工作中”。
+              {loadingStage === 'facts'
+                ? '正在从材料中提取事实。下一步会由你逐条确认，确认前不会生成大纲。'
+                : (referenceText.trim() && strictMaterial
+                  ? '正在先提取必须保留的材料事实，再生成 outline。'
+                  : '正在生成 outline。')}
+              {' '}
+              云端模型通常在十几秒内完成，本地模型可能需要几分钟。进度条仅表示“仍在工作中”。
             </div>
           </div>
         )}

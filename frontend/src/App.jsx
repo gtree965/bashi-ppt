@@ -1,17 +1,26 @@
 import { useState } from 'react';
 import Header from './components/Header';
 import TopicInput from './components/TopicInput';
+import GroundedFactReview from './components/GroundedFactReview';
 import OutlineEditor from './components/OutlineEditor';
 import DraftReview from './components/DraftReview';
 import TemplateSelector from './components/TemplateSelector';
 import GenerateButton from './components/GenerateButton';
 import HymnStudio from './components/HymnStudio';
 import LLMSettings from './components/LLMSettings';
-import { generateOutline, generateDraft, refineDraft, generatePptx } from './api/client';
+import {
+  generateOutline,
+  prepareGroundedFacts,
+  generateDraft,
+  refineDraft,
+  generatePptx,
+} from './api/client';
 import { mermaidToPngDataUrl } from './utils/diagramRenderer';
 
 const STEPS = {
   IDLE: 'idle',
+  PREPARING_FACTS: 'preparing_facts',
+  REVIEWING_FACTS: 'reviewing_facts',
   GENERATING_OUTLINE: 'generating_outline',
   DRAFTING: 'drafting',
   REVIEW: 'review',
@@ -50,14 +59,43 @@ function App() {
   const [bulletStyle, setBulletStyle] = useState('dot');
   const [selectedTheme, setSelectedTheme] = useState('clean_blue');
   const [article, setArticle] = useState('');
-  const [language, setLanguage] = useState('zh');
+  const [outputLanguage, setOutputLanguage] = useState('zh');
   const [draftParams, setDraftParams] = useState(null);
   const [draftBusy, setDraftBusy] = useState(false);
+  const [lastInputParams, setLastInputParams] = useState(null);
+  const [groundedParams, setGroundedParams] = useState(null);
+  const [preparedFacts, setPreparedFacts] = useState([]);
+  const [groundedBusy, setGroundedBusy] = useState(false);
+  const [generationContext, setGenerationContext] = useState({
+    mode: 'creative',
+    factTable: [],
+    audit: null,
+  });
 
-  const handleTopicSubmit = async ({ topic, numSlides, scenario, language, referenceText, draftFirst }) => {
+  const handleTopicSubmit = async ({
+    topic,
+    numSlides,
+    scenario,
+    outputLanguage,
+    referenceText,
+    draftFirst,
+    generationMode,
+    slideCountMode,
+  }) => {
+    const submittedParams = {
+      topic,
+      numSlides,
+      scenario,
+      outputLanguage,
+      referenceText,
+      draftFirst,
+      generationMode,
+      slideCountMode,
+    };
+    setLastInputParams(submittedParams);
     const autoTemplate = TEMPLATE_BY_SCENARIO[scenario] || 'teaching';
     setScenario(scenario);
-    setLanguage(language);
+    setOutputLanguage(outputLanguage);
     setTemplate(autoTemplate);
     setSelectedTheme(THEME_BY_TEMPLATE[autoTemplate] || 'clean_blue');
     setError(null);
@@ -65,14 +103,35 @@ function App() {
 
     // Draft-first path: generate an article, then review before the outline editor.
     if (draftFirst) {
-      setDraftParams({ topic, numSlides, scenario, language, referenceText });
+      setDraftParams({
+        topic,
+        numSlides,
+        scenario,
+        outputLanguage,
+        referenceText,
+        slideCountMode,
+      });
       setStep(STEPS.DRAFTING);
       try {
-        const data = await generateDraft(topic, numSlides, scenario, language, referenceText);
+        const data = await generateDraft(
+          topic,
+          numSlides,
+          scenario,
+          outputLanguage,
+          referenceText,
+          slideCountMode
+        );
         if (data.success) {
           setArticle(data.article || '');
           setOutline(data.outline);
           setWarnings(data.warnings || []);
+          setGenerationContext({ mode: 'creative', factTable: [], audit: null });
+          setDraftParams((current) => ({
+            ...current,
+            numSlides: data.effective_num_slides || numSlides,
+            slideCountMode: data.slide_count_mode || slideCountMode,
+            slideRecommendationReason: data.slide_recommendation_reason || '',
+          }));
           setStep(STEPS.REVIEW);
         } else {
           setError(data.error || 'Draft generation failed');
@@ -85,13 +144,45 @@ function App() {
       return;
     }
 
+    if (generationMode === 'grounded') {
+      setGroundedParams(submittedParams);
+      setStep(STEPS.PREPARING_FACTS);
+      try {
+        const data = await prepareGroundedFacts({ referenceText });
+        if (data.success) {
+          setPreparedFacts(data.fact_table || []);
+          setStep(STEPS.REVIEWING_FACTS);
+        } else {
+          setError(data.error || 'Fact extraction failed');
+          setStep(STEPS.IDLE);
+        }
+      } catch (err) {
+        setError(err.message);
+        setStep(STEPS.IDLE);
+      }
+      return;
+    }
+
     // Fast path: straight to outline.
     setStep(STEPS.GENERATING_OUTLINE);
     try {
-      const data = await generateOutline(topic, numSlides, scenario, language, referenceText);
+      const data = await generateOutline(
+        topic,
+        numSlides,
+        scenario,
+        outputLanguage,
+        referenceText,
+        generationMode,
+        slideCountMode
+      );
       if (data.success) {
         setOutline(data.outline);
         setWarnings(data.warnings || []);
+        setGenerationContext({
+          mode: data.generation_mode || generationMode || 'creative',
+          factTable: data.fact_table || [],
+          audit: data.generation_audit || null,
+        });
         setStep(STEPS.EDITING);
       } else {
         setError(data.error || 'Outline generation failed');
@@ -101,6 +192,48 @@ function App() {
       setError(err.message);
       setStep(STEPS.IDLE);
     }
+  };
+
+  const handleConfirmGroundedFacts = async (confirmedFacts) => {
+    if (!groundedParams || confirmedFacts.length === 0) return;
+    setGroundedBusy(true);
+    setError(null);
+    setWarnings([]);
+    try {
+      const data = await generateOutline(
+        groundedParams.topic,
+        groundedParams.numSlides,
+        groundedParams.scenario,
+        groundedParams.outputLanguage,
+        groundedParams.referenceText,
+        'grounded',
+        groundedParams.slideCountMode,
+        confirmedFacts
+      );
+      if (data.success) {
+        setOutline(data.outline);
+        setWarnings(data.warnings || []);
+        setGenerationContext({
+          mode: 'grounded',
+          factTable: data.fact_table || confirmedFacts,
+          audit: data.generation_audit || null,
+        });
+        setPreparedFacts(data.fact_table || confirmedFacts);
+        setStep(STEPS.EDITING);
+      } else {
+        setError(data.error || 'Outline generation failed');
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGroundedBusy(false);
+    }
+  };
+
+  const handleBackFromGroundedFacts = () => {
+    setPreparedFacts([]);
+    setGroundedParams(null);
+    setStep(STEPS.IDLE);
   };
 
   const handleRefineDraft = async (correction) => {
@@ -113,6 +246,13 @@ function App() {
         setArticle(data.article || '');
         setOutline(data.outline);
         setWarnings(data.warnings || []);
+        setDraftParams((current) => ({
+          ...current,
+          numSlides: data.effective_num_slides || current?.numSlides,
+          slideCountMode: data.slide_count_mode || current?.slideCountMode,
+          slideRecommendationReason:
+            data.slide_recommendation_reason || current?.slideRecommendationReason || '',
+        }));
       } else {
         setError(data.error || 'Draft refinement failed');
       }
@@ -170,9 +310,14 @@ function App() {
     setBulletStyle('dot');
     setSelectedTheme('clean_blue');
     setArticle('');
-    setLanguage('zh');
+    setOutputLanguage('zh');
     setDraftParams(null);
     setDraftBusy(false);
+    setLastInputParams(null);
+    setGroundedParams(null);
+    setPreparedFacts([]);
+    setGroundedBusy(false);
+    setGenerationContext({ mode: 'creative', factTable: [], audit: null });
   };
 
   return (
@@ -259,15 +404,40 @@ function App() {
           <div className="mt-8 space-y-6">
             {mode === MODES.PRESENTATION && (
               <>
-                {(step === STEPS.IDLE || step === STEPS.GENERATING_OUTLINE || step === STEPS.DRAFTING) && (
+                {(step === STEPS.IDLE
+                  || step === STEPS.PREPARING_FACTS
+                  || step === STEPS.GENERATING_OUTLINE
+                  || step === STEPS.DRAFTING) && (
                   <TopicInput
                     onSubmit={handleTopicSubmit}
-                    isLoading={step === STEPS.GENERATING_OUTLINE || step === STEPS.DRAFTING}
+                    initialValues={lastInputParams}
+                    loadingStage={
+                      step === STEPS.PREPARING_FACTS
+                        ? 'facts'
+                        : (step === STEPS.DRAFTING ? 'draft' : 'outline')
+                    }
+                    isLoading={
+                      step === STEPS.PREPARING_FACTS
+                      || step === STEPS.GENERATING_OUTLINE
+                      || step === STEPS.DRAFTING
+                    }
+                  />
+                )}
+
+                {step === STEPS.REVIEWING_FACTS && (
+                  <GroundedFactReview
+                    topic={groundedParams?.topic}
+                    facts={preparedFacts}
+                    onConfirm={handleConfirmGroundedFacts}
+                    onBack={handleBackFromGroundedFacts}
+                    isBusy={groundedBusy}
                   />
                 )}
 
                 {step === STEPS.REVIEW && (
                   <DraftReview
+                    title={outline?.title || draftParams?.topic || '备课文章'}
+                    slideRecommendationReason={draftParams?.slideRecommendationReason}
                     article={article}
                     onArticleChange={setArticle}
                     outline={outline}
@@ -291,8 +461,11 @@ function App() {
                       outline={outline}
                       onOutlineChange={setOutline}
                       scenario={scenario}
-                      language={language}
+                      outputLanguage={outputLanguage}
                       article={article}
+                      generationMode={generationContext.mode}
+                      factTable={generationContext.factTable}
+                      generationAudit={generationContext.audit}
                     />
                     <GenerateButton
                       onGenerate={handleGeneratePptx}

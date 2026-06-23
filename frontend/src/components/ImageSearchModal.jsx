@@ -7,6 +7,7 @@ export default function ImageSearchModal({ isOpen, onClose, onSelectImage, initi
   const [images, setImages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [resolvedQuery, setResolvedQuery] = useState('');
 
   useEffect(() => {
     if (isOpen) {
@@ -17,6 +18,7 @@ export default function ImageSearchModal({ isOpen, onClose, onSelectImage, initi
       } else {
         setImages([]);
         setError(null);
+        setResolvedQuery('');
       }
     }
   }, [isOpen, initialQuery]);
@@ -27,10 +29,12 @@ export default function ImageSearchModal({ isOpen, onClose, onSelectImage, initi
 
     setIsLoading(true);
     setError(null);
+    setResolvedQuery('');
     try {
       const res = await searchImages(q);
       if (res.success && res.images) {
         setImages(res.images);
+        setResolvedQuery(res.search_query || '');
       } else {
         setError(res.error || '无法加载图片');
       }
@@ -93,6 +97,11 @@ export default function ImageSearchModal({ isOpen, onClose, onSelectImage, initi
               {isLoading ? '搜索中...' : '搜索'}
             </button>
           </form>
+          {resolvedQuery && resolvedQuery.toLowerCase() !== query.trim().toLowerCase() && (
+            <p className="mt-2 px-1 text-xs text-bashi-text-muted">
+              实际搜索关键词：<span className="text-bashi-copper">{resolvedQuery}</span>
+            </p>
+          )}
 
           {/* Results grid */}
           <div className="mt-6 flex-1 overflow-y-auto min-h-[300px]">
@@ -129,17 +138,17 @@ export default function ImageSearchModal({ isOpen, onClose, onSelectImage, initi
                       onClose();
                     }}
                     className="group relative aspect-video overflow-hidden rounded-xl border border-white/5 bg-black/40 transition hover:border-bashi-copper hover:scale-[1.02] active:scale-[0.98]"
-                    title={`Tags: ${img.tags}`}
+                    title={`Tags: ${img.tags || ''}`}
                   >
                     <img
                       src={img.preview_url}
-                      alt={img.tags}
+                      alt={img.tags || 'Pixabay image'}
                       className="h-full w-full object-cover opacity-80 group-hover:opacity-100 transition"
                       loading="lazy"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition flex items-end p-2">
                       <span className="text-[10px] text-white/90 truncate w-full text-left font-light">
-                        {img.tags.split(',')[0]}
+                        {(img.tags || 'Pixabay').split(',')[0]}
                       </span>
                     </div>
                   </button>

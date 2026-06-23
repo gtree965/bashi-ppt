@@ -34,7 +34,11 @@ class TestArticlePrompt(unittest.TestCase):
         self.assertIn("改成面向小学生", prompt)
 
     def test_messages_shape(self):
-        messages = build_article_messages(topic="X", scenario="teaching", language="zh")
+        messages = build_article_messages(
+            topic="X",
+            scenario="teaching",
+            output_language="zh",
+        )
         self.assertEqual([m["role"] for m in messages], ["system", "user"])
 
     def test_strip_think_tags_recovers_prose(self):

@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ImageSearchModal from './ImageSearchModal';
 import { mermaidToPngDataUrl } from '../utils/diagramRenderer';
 import { buildMermaid, DIAGRAM_KINDS } from '../utils/diagramTemplates';
+import { lengthHint, truncateSlideText } from '../utils/textConstraints';
+import { auditGroundedOutline } from '../utils/groundingAudit';
 import { generateSpeakerNotes } from '../api/client';
 
 const NOTE_DURATIONS = [5, 10, 20, 30, 45, 60];
@@ -51,7 +53,16 @@ const SLIDE_CONSTRAINTS = {
   },
 };
 
-export default function OutlineEditor({ outline, onOutlineChange, scenario = 'general', language = 'zh', article = '' }) {
+export default function OutlineEditor({
+  outline,
+  onOutlineChange,
+  scenario = 'general',
+  outputLanguage = 'zh',
+  article = '',
+  generationMode = 'creative',
+  factTable = [],
+  generationAudit = null,
+}) {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeSlideIndex, setActiveSlideIndex] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -62,6 +73,7 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
   const [notesError, setNotesError] = useState(null);
   const [notesNotice, setNotesNotice] = useState(null);
   const [openNotes, setOpenNotes] = useState(() => new Set());
+  const [openFactMappings, setOpenFactMappings] = useState(() => new Set());
   // Track the latest outline so the async notes result can detect structural changes
   // (add/remove slide) that happened while the LLM was running, and discard if so.
   const outlineRef = useRef(outline);
@@ -78,6 +90,13 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
   const [openDiagrams, setOpenDiagrams] = useState(() => new Set());
   // Per-slide input mode: 'simple' (steps, one per line) or 'advanced' (raw Mermaid).
   const [diagramModes, setDiagramModes] = useState({});
+  const currentAudit = useMemo(
+    () =>
+      generationMode === 'grounded'
+        ? auditGroundedOutline(outline, factTable)
+        : null,
+    [outline, factTable, generationMode]
+  );
 
   const renderDiagramPreview = async (pageNumber, mermaid) => {
     const source = (mermaid || '').trim();
@@ -149,7 +168,7 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
     const updated = { ...outline };
     updated.slides = [...updated.slides];
     const slide = { ...updated.slides[slideIndex] };
-    const constraints = SLIDE_CONSTRAINTS[slide.slide_type];
+    const constraints = constraintsFor(slide.slide_type);
     if (slide.content_points.length >= constraints.maxPoints) return;
     slide.content_points = [...slide.content_points, '新要点'];
     updated.slides[slideIndex] = slide;
@@ -160,7 +179,7 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
     const updated = { ...outline };
     updated.slides = [...updated.slides];
     const slide = { ...updated.slides[slideIndex] };
-    const constraints = SLIDE_CONSTRAINTS[slide.slide_type];
+    const constraints = constraintsFor(slide.slide_type);
     if (slide.content_points.length <= constraints.minPoints) return;
     slide.content_points = slide.content_points.filter((_, index) => index !== pointIndex);
     updated.slides[slideIndex] = slide;
@@ -266,14 +285,43 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
     });
   };
 
-  // Signature over exactly the fields the notes prompt consumes (type, title, points).
+  const toggleFactMappingOpen = (pageNumber) => {
+    setOpenFactMappings((prev) => {
+      const next = new Set(prev);
+      if (next.has(pageNumber)) next.delete(pageNumber);
+      else next.add(pageNumber);
+      return next;
+    });
+  };
+
+  const toggleSlideFact = (slideIndex, factId) => {
+    const slide = outline.slides[slideIndex];
+    const current = Array.isArray(slide.fact_ids) ? slide.fact_ids : [];
+    const next = current.includes(factId)
+      ? current.filter((id) => id !== factId)
+      : [...current, factId].sort((a, b) => a - b);
+    patchSlide(slideIndex, { fact_ids: next });
+  };
+
+  // Signature over exactly the fields the notes prompt consumes.
   // If any of these change during the async call — add/remove, delete-then-add, or a
-  // title/point edit — the returned notes no longer match and are discarded.
+  // title/point/fact-mapping edit — the returned notes no longer match and are discarded.
   const structureSignature = (o) =>
-    JSON.stringify(o.slides.map((s) => [s.slide_type, s.title, s.content_points]));
+    JSON.stringify(
+      o.slides.map((s) => [
+        s.slide_type,
+        s.title,
+        s.content_points,
+        s.fact_ids || [],
+      ])
+    );
 
   const handleGenerateNotes = async () => {
     if (notesBusy) return;
+    if (generationMode === 'grounded' && !currentAudit?.complete) {
+      setNotesError('请先完成事实对应：所有确认事实至少覆盖一次，且每个内容页都要有有效事实依据。');
+      return;
+    }
     setNotesBusy(true);
     setNotesError(null);
     setNotesNotice(null);
@@ -282,9 +330,11 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
       const data = await generateSpeakerNotes({
         outline,
         article,
-        language,
+        outputLanguage,
         duration: notesDuration,
         style: notesStyle,
+        generationMode,
+        factTable,
       });
       if (!data.success) {
         setNotesError(data.error || '讲稿生成失败');
@@ -326,6 +376,7 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
       title: '新页面',
       content_points: ['要点一', '要点二', '要点三'],
       slide_type: 'content',
+      fact_ids: generationMode === 'grounded' ? [] : undefined,
     };
     updated.slides = [
       ...updated.slides.slice(0, insertIndex),
@@ -334,6 +385,14 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
     ];
     updated.slides = updated.slides.map((slide, index) => ({ ...slide, page_number: index + 1 }));
     onOutlineChange(updated);
+  };
+
+  const constraintsFor = (slideType) => {
+    const constraints = SLIDE_CONSTRAINTS[slideType];
+    if (generationMode === 'grounded' && slideType === 'content') {
+      return { ...constraints, minPoints: 1 };
+    }
+    return constraints;
   };
 
   return (
@@ -354,6 +413,48 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
           共 {outline.slides.length} 页
         </div>
       </div>
+
+      {/* Speaker-notes (讲稿) controls */}
+      {generationMode === 'grounded' && (
+        <div
+          className={`mb-5 rounded-2xl border px-4 py-3 text-sm ${
+            !currentAudit?.complete
+              ? 'border-amber-300/30 bg-amber-400/10 text-amber-50'
+              : 'border-emerald-300/25 bg-emerald-400/10 text-emerald-50'
+          }`}
+        >
+          <div className="font-medium">严格依据材料模式</div>
+          <div className="mt-1 text-xs leading-5 opacity-80">
+            大纲和后续讲稿依据已确认的 {factTable.length} 条材料事实生成。
+            修改大纲后，下面的事实标注覆盖会立即更新。
+          </div>
+          <div className="mt-2 border-t border-current/10 pt-2 text-xs leading-5 opacity-90">
+            <div>
+              当前事实标注覆盖：
+              {currentAudit?.declared_fact_ids.length || 0} / {currentAudit?.fact_count || factTable.length}
+              （{Math.round((currentAudit?.fact_coverage || 0) * 100)}%）
+              {generationAudit?.retry_attempted
+                ? `；生成时页数已自动修复 ${generationAudit.initial_slides} → ${generationAudit.retry_slides}`
+                : ''}
+            </div>
+            {currentAudit?.missing_fact_ids.length > 0 && (
+              <div>尚未分配到页面的事实：{currentAudit.missing_fact_ids.join('、')}</div>
+            )}
+            {currentAudit?.invalid_fact_ids.length > 0 && (
+              <div>已失效的事实编号：{currentAudit.invalid_fact_ids.join('、')}</div>
+            )}
+            {currentAudit?.ungrounded_content_pages.length > 0 && (
+              <div>
+                未选择事实依据的内容页：
+                {currentAudit.ungrounded_content_pages.join('、')}
+              </div>
+            )}
+            <div className="mt-1 opacity-70">
+              这是事实编号的结构检查，不代表系统已经判断正文语义完全正确。
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Speaker-notes (讲稿) controls */}
       <div className="mb-5 rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -394,10 +495,17 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
           <button
             type="button"
             onClick={handleGenerateNotes}
-            disabled={notesBusy}
+            disabled={
+              notesBusy
+              || (generationMode === 'grounded' && !currentAudit?.complete)
+            }
             className="bashi-btn-secondary rounded-full px-4 py-2 text-xs font-semibold disabled:opacity-40"
           >
-            {notesBusy ? '生成讲稿中...' : '生成讲稿'}
+            {notesBusy
+              ? '生成讲稿中...'
+              : (generationMode === 'grounded' && !currentAudit?.complete
+                  ? '请先完成事实对应'
+                  : '生成讲稿')}
           </button>
         </div>
         {notesError && <p className="mt-2 text-xs text-red-200">{notesError}</p>}
@@ -409,7 +517,7 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
 
       <div className="space-y-4">
         {outline.slides.map((slide, slideIndex) => {
-          const constraints = SLIDE_CONSTRAINTS[slide.slide_type];
+          const constraints = constraintsFor(slide.slide_type);
 
           return (
             <div
@@ -424,7 +532,8 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
                   <div>
                     <div className="text-sm font-medium text-bashi-text">{SLIDE_TYPE_LABELS[slide.slide_type]}</div>
                     <div className="text-xs text-bashi-text-muted">
-                      标题最多 {constraints.maxTitleLength} 字，要点 {constraints.minPoints}-{constraints.maxPoints} 条
+                      标题{lengthHint(constraints.maxTitleLength, outputLanguage)}，
+                      要点 {constraints.minPoints}-{constraints.maxPoints} 条
                     </div>
                   </div>
                 </div>
@@ -442,8 +551,12 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
               <input
                 type="text"
                 value={slide.title}
-                onChange={(event) => updateSlideTitle(slideIndex, event.target.value)}
-                maxLength={constraints.maxTitleLength}
+                onChange={(event) =>
+                  updateSlideTitle(
+                    slideIndex,
+                    truncateSlideText(event.target.value, constraints.maxTitleLength)
+                  )
+                }
                 className="bashi-input mt-4 w-full rounded-2xl px-4 py-3 text-lg font-medium"
               />
 
@@ -454,8 +567,13 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
                     <input
                       type="text"
                       value={point}
-                      onChange={(event) => updatePoint(slideIndex, pointIndex, event.target.value)}
-                      maxLength={constraints.maxPointLength}
+                      onChange={(event) =>
+                        updatePoint(
+                          slideIndex,
+                          pointIndex,
+                          truncateSlideText(event.target.value, constraints.maxPointLength)
+                        )
+                      }
                       className="bashi-input flex-1 rounded-2xl px-4 py-2.5 text-sm"
                     />
                     <button
@@ -478,6 +596,110 @@ export default function OutlineEditor({ outline, onOutlineChange, scenario = 'ge
               >
                 + 添加要点
               </button>
+
+              {generationMode === 'grounded' && (() => {
+                const selectedIds = Array.isArray(slide.fact_ids) ? slide.fact_ids : [];
+                const validSelected = selectedIds.filter((id) =>
+                  factTable.some((fact) => fact.id === id)
+                );
+                const invalidSelected = selectedIds.filter((id) =>
+                  !factTable.some((fact) => fact.id === id)
+                );
+                const mappingOpen = openFactMappings.has(slide.page_number);
+                const requiresFact = slide.slide_type === 'content';
+                return (
+                  <div
+                    className={`mt-4 rounded-2xl border px-4 py-3 ${
+                      requiresFact && validSelected.length === 0
+                        ? 'border-amber-300/30 bg-amber-400/10'
+                        : 'border-white/10 bg-black/15'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-medium text-bashi-text-secondary">
+                          本页事实依据
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {selectedIds.length > 0 ? (
+                            <>
+                              {validSelected.map((id) => (
+                                <span
+                                  key={id}
+                                  className="rounded-full border border-emerald-300/25 bg-emerald-400/10 px-2 py-0.5 text-xs text-emerald-100"
+                                >
+                                  #{id}
+                                </span>
+                              ))}
+                              {invalidSelected.map((id) => (
+                                <span
+                                  key={`invalid-${id}`}
+                                  className="rounded-full border border-red-300/30 bg-red-400/10 px-2 py-0.5 text-xs text-red-100"
+                                >
+                                  无效 #{id}
+                                </span>
+                              ))}
+                            </>
+                          ) : (
+                            <span className="text-xs text-amber-100/80">
+                              {requiresFact ? '内容页必须至少选择一条事实' : '尚未选择事实'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => toggleFactMappingOpen(slide.page_number)}
+                        className="rounded-full border border-bashi-border px-3 py-1.5 text-xs text-bashi-text-secondary transition hover:border-bashi-copper hover:text-bashi-copper"
+                      >
+                        {mappingOpen ? '收起事实列表' : '调整事实对应'}
+                      </button>
+                    </div>
+
+                    {invalidSelected.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => patchSlide(slideIndex, { fact_ids: validSelected })}
+                        className="mt-2 text-xs font-medium text-red-200 transition hover:text-white"
+                      >
+                        清理本页无效编号
+                      </button>
+                    )}
+
+                    {mappingOpen && (
+                      <div className="mt-3 max-h-64 space-y-2 overflow-y-auto border-t border-white/10 pt-3">
+                        {factTable.map((fact) => {
+                          const checked = selectedIds.includes(fact.id);
+                          return (
+                            <label
+                              key={fact.id}
+                              className={`flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2 text-xs leading-5 transition ${
+                                checked
+                                  ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-50'
+                                  : 'border-white/10 bg-black/15 text-bashi-text-secondary'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleSlideFact(slideIndex, fact.id)}
+                                className="mt-1 accent-bashi-copper"
+                              />
+                              <span>
+                                <span className="mr-1 font-semibold">#{fact.id}</span>
+                                {fact.text}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <p className="mt-2 text-xs leading-5 text-bashi-text-muted">
+                      请人工确认本页文字确实表达了所选事实；系统这里只检查编号覆盖关系。
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* Optional Image for content slide */}
               {slide.slide_type === 'content' && (
