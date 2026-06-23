@@ -5,7 +5,19 @@ export default function Header() {
         Bashi Creation Suite
       </div>
 
-      <h1 className="bashi-gradient-text mt-6 text-5xl font-bold md:text-7xl">
+      <div className="mx-auto mt-5 w-full max-w-[560px] px-2">
+        <img
+          src="/Bashi_PPT_logo.png"
+          alt="巴适PPT标志：熔炉式幻灯片工坊"
+          className="bashi-brand-logo h-auto w-full rounded-2xl"
+          width="1365"
+          height="768"
+          decoding="async"
+          fetchPriority="high"
+        />
+      </div>
+
+      <h1 className="bashi-gradient-text mt-4 text-5xl font-bold md:text-7xl">
         巴适PPT
       </h1>
 
