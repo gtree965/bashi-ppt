@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 from llm.outline_parser import parse_outline
-from schema import OutlineRequest
+from schema import LLMSettingsRequest, OutlineRequest
 from text_constraints import (
     fits_display_limit,
     text_display_units,
@@ -86,6 +86,39 @@ class TestCleanProductModes(unittest.TestCase):
             OutlineRequest.model_validate(
                 {"topic": "English topic", "language": "en"}
             )
+
+
+class TestLLMProviderSettings(unittest.TestCase):
+    def test_accepts_siliconflow_provider(self):
+        payload = LLMSettingsRequest.model_validate({
+            "provider": "siliconflow",
+            "api_key": "sk-test",
+            "model": "Qwen/Qwen3.6-35B-A3B",
+        })
+        self.assertEqual(payload.provider, "siliconflow")
+
+    def test_accepts_dashscope_provider(self):
+        payload = LLMSettingsRequest.model_validate({
+            "provider": "dashscope",
+            "api_key": "sk-test",
+            "model": "qwen3.7-plus",
+        })
+        self.assertEqual(payload.provider, "dashscope")
+
+    def test_cloud_provider_requires_api_key(self):
+        with self.assertRaises(ValueError):
+            LLMSettingsRequest.model_validate({
+                "provider": "siliconflow",
+                "model": "Qwen/Qwen3.6-35B-A3B",
+            })
+
+    def test_custom_provider_requires_base_url(self):
+        with self.assertRaises(ValueError):
+            LLMSettingsRequest.model_validate({
+                "provider": "custom",
+                "api_key": "sk-test",
+                "model": "custom-model",
+            })
 
 
 if __name__ == "__main__":

@@ -101,15 +101,21 @@ Windows 便携包已经包含 Python 和所需 Python 库，不需要另装 Pyth
 
 ### 云端模型
 
-设置界面可以直接配置 OpenRouter。其他 OpenAI 兼容服务可在 `.env` 中设置：
+设置界面可以直接配置：
+
+- **阿里云百炼 / DashScope**：默认地址 `https://dashscope.aliyuncs.com/compatible-mode/v1`
+- **硅基流动**：默认地址 `https://api.siliconflow.cn/v1`
+- **OpenRouter**：默认地址 `https://openrouter.ai/api/v1`
+- **自定义 OpenAI 兼容接口**：用于 DeepSeek、Groq 或其他服务商
 
 ```env
-LLM_BASE_URL=https://你的服务地址/v1
+LLM_PROVIDER=dashscope
+LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_API_KEY=你的API密钥
-LLM_MODEL=模型ID
+LLM_MODEL=qwen3.7-plus
 ```
 
-使用云端模型时，提示词、参考材料、大纲和讲稿请求会发送给相应服务商。使用敏感材料前，请自行确认服务商的数据保留政策、服务地区、费用和法律责任。
+使用云端模型时，提示词、参考材料、大纲和讲稿请求会发送给相应服务商，并可能产生费用。使用敏感材料前，请自行确认服务商的数据保留政策、服务地区、费用、学校/机构制度和法律责任。
 
 详见：[隐私与数据去向](docs/PRIVACY_CN.md)。
 

@@ -7,8 +7,10 @@
 Open the gear icon in the upper-right corner.
 
 - LM Studio and Ollama keep generation requests on the local machine.
-- OpenRouter can be configured in the interface.
-- Other OpenAI-compatible services can be configured in `.env`.
+- Alibaba Cloud Bailian / DashScope, SiliconFlow, OpenRouter, and custom
+  OpenAI-compatible endpoints can be configured in the settings panel.
+- Paste the provider API key, choose a recommended model or type the Model ID,
+  test the connection, and save.
 
 Use “Test connection” before starting a lesson-prep workflow.
 

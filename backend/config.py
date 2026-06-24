@@ -5,6 +5,9 @@ LLM_PROVIDER options:
   lmstudio   — LM Studio on localhost:1234 (default)
   ollama     — Ollama on localhost:11434
   openrouter — OpenRouter cloud API (requires LLM_API_KEY)
+  siliconflow — SiliconFlow cloud API (requires LLM_API_KEY)
+  dashscope  — Alibaba Cloud Bailian / DashScope OpenAI-compatible API
+  custom     — Any OpenAI-compatible endpoint
 
 Settings can be changed at runtime via POST /api/settings/llm.
 Call config.reload() after writing the .env to pick up new values.
@@ -27,9 +30,12 @@ APP_VERSION = (
 
 # Default base URLs per provider
 _PROVIDER_DEFAULTS: dict[str, str] = {
-    "lmstudio":   "http://localhost:1234/v1",
-    "ollama":     "http://localhost:11434/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
+    "lmstudio":    "http://localhost:1234/v1",
+    "ollama":      "http://localhost:11434/v1",
+    "openrouter":  "https://openrouter.ai/api/v1",
+    "siliconflow": "https://api.siliconflow.cn/v1",
+    "dashscope":   "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "custom":      "",
 }
 
 
@@ -39,7 +45,7 @@ def _load() -> None:
 
     provider = os.getenv("LLM_PROVIDER", "lmstudio").lower()
     default_url = _PROVIDER_DEFAULTS.get(provider, _PROVIDER_DEFAULTS["lmstudio"])
-    default_key = "lm-studio" if provider != "openrouter" else ""
+    default_key = "lm-studio" if provider == "lmstudio" else ("ollama" if provider == "ollama" else "")
 
     global LLM_PROVIDER, LLM_BASE_URL, LLM_API_KEY, LLM_MODEL
     global LLM_TEMPERATURE, LLM_MAX_TOKENS, LLM_TIMEOUT

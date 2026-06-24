@@ -1,30 +1,82 @@
 import { useState, useEffect } from "react";
 import { getLLMSettings, saveLLMSettings, getRecommendedModels, testLLMSettings, getOpenRouterFreeModels } from "../api/client";
 
+const CLOUD_PROVIDERS = new Set(["openrouter", "siliconflow", "dashscope", "custom"]);
+
 const PROVIDERS = [
+  {
+    id: "dashscope",
+    icon: "☁️",
+    title: "阿里云百炼",
+    subtitle: "中国大陆访问稳定，适合 Qwen 系列模型",
+    badge: "国内推荐",
+    badgeColor: "bg-emerald-500/20 text-emerald-300",
+    keyLabel: "百炼 API Key",
+    keyPlaceholder: "sk-...",
+    help: {
+      label: "bailian.console.aliyun.com",
+      url: "https://bailian.console.aliyun.com/",
+    },
+    modelPlaceholder: "qwen3.7-plus",
+  },
+  {
+    id: "siliconflow",
+    icon: "⚡",
+    title: "硅基流动",
+    subtitle: "OpenAI 兼容接口，中文模型选择多，价格透明",
+    badge: "高性价比",
+    badgeColor: "bg-amber-500/20 text-amber-300",
+    keyLabel: "硅基流动 API Key",
+    keyPlaceholder: "sk-...",
+    help: {
+      label: "cloud.siliconflow.cn",
+      url: "https://cloud.siliconflow.cn/",
+    },
+    modelPlaceholder: "Qwen/Qwen3.6-35B-A3B",
+  },
   {
     id: "openrouter",
     icon: "🌐",
-    title: "云端 OpenRouter",
-    subtitle: "免费注册，无需安装，适合大多数用户",
-    badge: "推荐新手",
-    badgeColor: "bg-emerald-500/20 text-emerald-300",
-  },
-  {
-    id: "ollama",
-    icon: "🖥️",
-    title: "本地 Ollama",
-    subtitle: "隐私保护，无审查，适合教会/离线场景",
-    badge: "离线优先",
-    badgeColor: "bg-blue-500/20 text-blue-300",
+    title: "OpenRouter",
+    subtitle: "海外聚合服务，免费模型多，但质量和访问可能波动",
+    badge: "免费可试",
+    badgeColor: "bg-cyan-500/20 text-cyan-300",
+    keyLabel: "OpenRouter API Key",
+    keyPlaceholder: "sk-or-v1-...",
+    help: {
+      label: "openrouter.ai",
+      url: "https://openrouter.ai",
+    },
+    modelPlaceholder: "openrouter/free",
   },
   {
     id: "lmstudio",
     icon: "🔧",
     title: "本地 LM Studio",
-    subtitle: "高级用户，自定义端口和模型",
-    badge: "高级",
+    subtitle: "本机运行，适合已会加载本地模型的用户",
+    badge: "本地",
     badgeColor: "bg-purple-500/20 text-purple-300",
+    modelPlaceholder: "local-model",
+  },
+  {
+    id: "ollama",
+    icon: "🖥️",
+    title: "本地 Ollama",
+    subtitle: "隐私保护、离线优先，适合技术用户",
+    badge: "离线优先",
+    badgeColor: "bg-blue-500/20 text-blue-300",
+    modelPlaceholder: "qwen3:8b",
+  },
+  {
+    id: "custom",
+    icon: "🧩",
+    title: "自定义兼容接口",
+    subtitle: "用于 DeepSeek、Groq 或其他 OpenAI-compatible 服务",
+    badge: "高级",
+    badgeColor: "bg-slate-500/20 text-slate-300",
+    keyLabel: "API Key",
+    keyPlaceholder: "your-api-key",
+    modelPlaceholder: "provider-model-id",
   },
 ];
 
@@ -32,7 +84,18 @@ const PROVIDER_DEFAULTS = {
   lmstudio: "http://localhost:1234/v1",
   ollama: "http://localhost:11434/v1",
   openrouter: "https://openrouter.ai/api/v1",
+  siliconflow: "https://api.siliconflow.cn/v1",
+  dashscope: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  custom: "",
 };
+
+function getProviderMeta(provider) {
+  return PROVIDERS.find((item) => item.id === provider) || PROVIDERS[0];
+}
+
+function isRecommendedModel(model, models) {
+  return Boolean(model) && models.some((item) => item.id === model);
+}
 
 export default function LLMSettings() {
   const [provider, setProvider] = useState("lmstudio");
@@ -40,7 +103,7 @@ export default function LLMSettings() {
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [showAdvancedUrl, setShowAdvancedUrl] = useState(false);
-  const [recommendedModels, setRecommendedModels] = useState({ ollama: [], openrouter: [] });
+  const [recommendedModels, setRecommendedModels] = useState({});
   const [isTesting, setIsTesting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -55,36 +118,44 @@ export default function LLMSettings() {
         const prov = settings.provider || "lmstudio";
         setProvider(prov);
         setModel(settings.model || "");
-        
+
         if (settings.api_key_set) {
           setApiKey(settings.api_key_masked || "");
         }
         if (settings.base_url) {
           setBaseUrl(settings.base_url);
-          const defaultUrl = PROVIDER_DEFAULTS[prov];
+          const defaultUrl = PROVIDER_DEFAULTS[prov] || "";
           const cleanBase = settings.base_url.replace(/\/$/, "");
           const cleanDefault = defaultUrl.replace(/\/$/, "");
-          setShowAdvancedUrl(cleanBase !== cleanDefault);
+          setShowAdvancedUrl(prov === "custom" || cleanBase !== cleanDefault);
         }
         if (settings.pixabay_api_key_set) {
           setPixabayApiKey(settings.pixabay_api_key_masked || "");
         }
-        
-        setRecommendedModels(models);
+
+        setRecommendedModels(models || {});
       })
       .catch(() => {})
       .finally(() => setIsLoading(false));
   }, []);
 
+  const selectedProvider = getProviderMeta(provider);
+  const requiresApiKey = CLOUD_PROVIDERS.has(provider);
+  const currentRecommended = recommendedModels[provider] || [];
+  const hasCustomRecommendedValue = model && !isRecommendedModel(model, currentRecommended);
+
+  const buildPayload = () => {
+    const payload = { provider, model };
+    if (requiresApiKey) payload.api_key = apiKey;
+    if (provider === "custom" || showAdvancedUrl) payload.base_url = baseUrl;
+    return payload;
+  };
+
   const handleTest = async () => {
     setIsTesting(true);
     setTestResult(null);
     try {
-      const payload = { provider, model };
-      if (provider === "openrouter") payload.api_key = apiKey;
-      if (showAdvancedUrl && baseUrl) payload.base_url = baseUrl;
-
-      const result = await testLLMSettings(payload);
+      const result = await testLLMSettings(buildPayload());
       if (result.connected) {
         setTestResult({ ok: true, message: result.message });
       } else {
@@ -101,9 +172,7 @@ export default function LLMSettings() {
     setIsSaving(true);
     setSaveResult(null);
     try {
-      const payload = { provider, model };
-      if (provider === "openrouter") payload.api_key = apiKey;
-      if (showAdvancedUrl && baseUrl) payload.base_url = baseUrl;
+      const payload = buildPayload();
       payload.pixabay_api_key = pixabayApiKey;
       await saveLLMSettings(payload);
       setSaveResult({ ok: true, message: "✅ 设置已保存，立即生效" });
@@ -134,9 +203,21 @@ export default function LLMSettings() {
     }
   };
 
-  const currentRecommended =
-    provider === "ollama" ? recommendedModels.ollama :
-    provider === "openrouter" ? recommendedModels.openrouter : [];
+  const handleProviderChange = (newProvider) => {
+    setProvider(newProvider);
+    setApiKey("");
+    setBaseUrl(PROVIDER_DEFAULTS[newProvider] || "");
+    setShowAdvancedUrl(newProvider === "custom");
+
+    const defaultModel =
+      recommendedModels[newProvider]?.[0]?.id ||
+      getProviderMeta(newProvider).modelPlaceholder ||
+      "";
+    setModel(defaultModel);
+
+    setTestResult(null);
+    setSaveResult(null);
+  };
 
   if (isLoading) {
     return (
@@ -153,6 +234,10 @@ export default function LLMSettings() {
         <p className="mt-1 text-sm text-bashi-text-secondary">选择 AI 来源，巴适PPT 会记住你的选择。</p>
       </div>
 
+      <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-100">
+        云端模型会接收你输入的主题、参考材料、大纲和讲稿请求，并可能产生费用。请根据学校/机构规则和材料敏感程度自行选择服务商。
+      </div>
+
       <div className="grid gap-3">
         {PROVIDERS.map((p) => (
           <label
@@ -166,25 +251,7 @@ export default function LLMSettings() {
               name="provider"
               value={p.id}
               checked={provider === p.id}
-              onChange={() => {
-                const newProvider = p.id;
-                setProvider(newProvider);
-                setBaseUrl(PROVIDER_DEFAULTS[newProvider] || "");
-                setShowAdvancedUrl(false);
-                
-                let defaultModel = "";
-                if (newProvider === "ollama") {
-                  defaultModel = recommendedModels.ollama?.[0]?.id || "";
-                } else if (newProvider === "openrouter") {
-                  defaultModel = recommendedModels.openrouter?.[0]?.id || "";
-                } else if (newProvider === "lmstudio") {
-                  defaultModel = "local-model";
-                }
-                setModel(defaultModel);
-
-                setTestResult(null);
-                setSaveResult(null);
-              }}
+              onChange={() => handleProviderChange(p.id)}
               className="sr-only"
             />
             <span className="mt-0.5 text-2xl">{p.icon}</span>
@@ -203,19 +270,26 @@ export default function LLMSettings() {
       </div>
 
       <div className="grid gap-4">
-        {provider === "openrouter" && (
+        {requiresApiKey && (
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-bashi-text">OpenRouter API Key</label>
+            <label className="mb-1.5 block text-sm font-medium text-bashi-text">{selectedProvider.keyLabel || "API Key"}</label>
             <input
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="sk-or-v1-..."
+              placeholder={selectedProvider.keyPlaceholder || "your-api-key"}
               className="bashi-input w-full rounded-xl px-4 py-2.5 font-mono text-sm"
               autoComplete="new-password"
             />
             <p className="mt-1.5 text-xs text-bashi-text-muted">
-              免费注册：<a href="https://openrouter.ai" target="_blank" rel="noreferrer" className="text-bashi-copper underline">openrouter.ai</a> → 复制 API Key 粘贴到这里
+              {selectedProvider.help ? (
+                <>
+                  到 <a href={selectedProvider.help.url} target="_blank" rel="noreferrer" className="text-bashi-copper underline">{selectedProvider.help.label}</a> 创建/复制 API Key。
+                </>
+              ) : (
+                "请从对应服务商控制台复制 API Key。"
+              )}
+              {" "}密钥只保存在本机应用目录的 .env 文件中。
             </p>
           </div>
         )}
@@ -223,14 +297,14 @@ export default function LLMSettings() {
         {provider === "ollama" && (
           <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-3 text-xs text-blue-300">
             <p className="font-medium">尚未安装 Ollama？</p>
-            <p className="mt-1">访问 <a href="https://ollama.com" target="_blank" rel="noreferrer" className="underline">ollama.com</a> 下载安装包（约 300MB），安装后点击"测试连接"。</p>
+            <p className="mt-1">访问 <a href="https://ollama.com" target="_blank" rel="noreferrer" className="underline">ollama.com</a> 下载安装包（约 300MB），安装后点击“测试连接”。</p>
           </div>
         )}
 
         {currentRecommended.length > 0 && (
           <div>
             <div className="mb-1.5 flex items-center justify-between">
-              <label className="text-sm font-medium text-bashi-text">选择模型</label>
+              <label className="text-sm font-medium text-bashi-text">推荐模型</label>
               {provider === "openrouter" && (
                 <button
                   type="button"
@@ -243,52 +317,52 @@ export default function LLMSettings() {
               )}
             </div>
             <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
+              value={hasCustomRecommendedValue ? "__custom__" : model}
+              onChange={(e) => {
+                if (e.target.value !== "__custom__") setModel(e.target.value);
+              }}
               className="bashi-input w-full rounded-xl px-4 py-2.5 text-sm"
             >
               <option value="">-- 选择推荐模型 --</option>
+              {hasCustomRecommendedValue && <option value="__custom__">当前手动模型：{model}</option>}
               {currentRecommended.map((m) => (
                 <option key={m.id} value={m.id}>{m.label}</option>
               ))}
             </select>
           </div>
         )}
+
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-bashi-text">模型 ID</label>
+          <input
+            type="text"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder={selectedProvider.modelPlaceholder || "provider-model-id"}
+            className="bashi-input w-full rounded-xl px-4 py-2.5 font-mono text-sm"
+          />
+          <p className="mt-1 text-[11px] text-bashi-text-muted leading-relaxed">
+            可直接填写服务商模型页面上的 Model ID；本地 LM Studio 通常可保持为 local-model。
+          </p>
+        </div>
+
         <div>
           <button type="button" onClick={() => setShowAdvancedUrl(!showAdvancedUrl)} className="text-xs text-bashi-text-muted underline">
-            {showAdvancedUrl ? "▲ 收起高级设置" : "▼ 高级设置"}
+            {showAdvancedUrl ? "▲ 收起服务地址" : "▼ 服务地址 / 高级设置"}
           </button>
-          {showAdvancedUrl && (
-            <div className="mt-2 flex flex-col gap-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-bashi-text-secondary">自定义服务地址</label>
-                <input
-                  type="text"
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder={
-                    provider === "ollama" ? "http://localhost:11434/v1" :
-                    provider === "openrouter" ? "https://openrouter.ai/api/v1" :
-                    "http://localhost:1234/v1"
-                  }
-                  className="bashi-input w-full rounded-xl px-4 py-2.5 font-mono text-sm"
-                />
-              </div>
-              {provider === "lmstudio" && (
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-bashi-text-secondary">模型名称 (选填)</label>
-                  <input
-                    type="text"
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    placeholder="local-model"
-                    className="bashi-input w-full rounded-xl px-4 py-2.5 text-sm"
-                  />
-                  <p className="mt-1 text-[11px] text-bashi-text-muted leading-relaxed">
-                    LM Studio 默认使用其界面中已加载的模型，通常无需修改。
-                  </p>
-                </div>
-              )}
+          {(showAdvancedUrl || provider === "custom") && (
+            <div className="mt-2">
+              <label className="mb-1 block text-xs font-medium text-bashi-text-secondary">服务地址 Base URL</label>
+              <input
+                type="text"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder={PROVIDER_DEFAULTS[provider] || "https://your-provider.example/v1"}
+                className="bashi-input w-full rounded-xl px-4 py-2.5 font-mono text-sm"
+              />
+              <p className="mt-1 text-[11px] text-bashi-text-muted leading-relaxed">
+                仅在服务商要求自定义接入点时修改。LM Studio / Ollama 会自动补齐 /v1。
+              </p>
             </div>
           )}
         </div>

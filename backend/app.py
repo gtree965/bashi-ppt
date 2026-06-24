@@ -29,6 +29,11 @@ from schema import (
     LYRICS_CHINESE_SCRIPT_OPTIONS,
     OLLAMA_RECOMMENDED_MODELS,
     OPENROUTER_RECOMMENDED_MODELS,
+    SILICONFLOW_RECOMMENDED_MODELS,
+    DASHSCOPE_RECOMMENDED_MODELS,
+    PROVIDER_DEFAULTS,
+    LOCAL_PROVIDERS,
+    CLOUD_API_KEY_PROVIDERS,
     error_response,
     format_validation_errors,
 )
@@ -594,6 +599,32 @@ def _validate_outline_request(data):
         return None, error_response(message_zh, message_en, 422)
 
 
+def _is_masked_secret(value: str | None) -> bool:
+    """Return True for UI placeholders like sk-...abcd or ********."""
+    text = (value or "").strip()
+    return bool(text) and ("..." in text or set(text) == {"*"})
+
+
+def _normalize_provider_base_url(provider: str, base_url: str | None) -> str:
+    """Apply provider defaults and local /v1 normalization."""
+    normalized = (base_url or PROVIDER_DEFAULTS.get(provider, PROVIDER_DEFAULTS["lmstudio"]) or "").strip()
+    if provider in LOCAL_PROVIDERS and normalized:
+        clean_url = normalized.rstrip("/")
+        if not clean_url.endswith("/v1"):
+            normalized = clean_url + "/v1"
+    return normalized
+
+
+def _cloud_test_extra_body(provider: str, base_url: str) -> dict | None:
+    """Disable high-cost reasoning by default for providers that support it."""
+    lower_url = (base_url or "").lower()
+    if provider in {"siliconflow", "dashscope"}:
+        return {"enable_thinking": False}
+    if "siliconflow" in lower_url or "dashscope.aliyuncs.com" in lower_url or ".maas.aliyuncs.com" in lower_url:
+        return {"enable_thinking": False}
+    return None
+
+
 @app.route("/api/generate-draft", methods=["POST"])
 def generate_draft():
     """Generate a draft article + an outline derived from it."""
@@ -1051,26 +1082,36 @@ def save_llm_settings():
         message_zh, message_en = format_validation_errors(exc)
         return error_response(message_zh, message_en, 422)
 
-    _PROVIDER_DEFAULTS = {
-        "lmstudio":   "http://localhost:1234/v1",
-        "ollama":     "http://localhost:11434/v1",
-        "openrouter": "https://openrouter.ai/api/v1",
-    }
-    base_url = payload.base_url or _PROVIDER_DEFAULTS[payload.provider]
-    if payload.provider in ("lmstudio", "ollama") and base_url:
-        clean_url = base_url.strip().rstrip("/")
-        if not clean_url.endswith("/v1"):
-            base_url = clean_url + "/v1"
+    base_url = _normalize_provider_base_url(payload.provider, payload.base_url)
+    api_key = (payload.api_key or "").strip()
+    key_is_masked = _is_masked_secret(api_key)
+    if payload.provider in CLOUD_API_KEY_PROVIDERS and key_is_masked:
+        if payload.provider != cfg.LLM_PROVIDER or not cfg.LLM_API_KEY:
+            return error_response(
+                "请重新填写当前云端服务的真实 API Key。",
+                "Please enter the real API key for the selected cloud provider.",
+                422,
+            )
+    elif payload.provider in CLOUD_API_KEY_PROVIDERS and not api_key:
+        return error_response(
+            "云端模型需要 API Key。",
+            "Cloud providers require an API key.",
+            422,
+        )
+    elif payload.provider == "lmstudio":
+        api_key = api_key or "lm-studio"
+    elif payload.provider == "ollama":
+        api_key = api_key or "ollama"
 
-    api_key  = payload.api_key or ("lm-studio" if payload.provider != "openrouter" else "")
     model    = payload.model or cfg.LLM_MODEL
 
     save_data = {
         "LLM_PROVIDER": payload.provider,
         "LLM_BASE_URL": base_url,
-        "LLM_API_KEY": api_key,
         "LLM_MODEL": model,
     }
+    if not key_is_masked:
+        save_data["LLM_API_KEY"] = api_key
     
     if payload.pixabay_api_key is not None:
         p_key = payload.pixabay_api_key.strip()
@@ -1189,6 +1230,8 @@ def recommended_models():
     return jsonify({
         "ollama":     OLLAMA_RECOMMENDED_MODELS,
         "openrouter": OPENROUTER_RECOMMENDED_MODELS,
+        "siliconflow": SILICONFLOW_RECOMMENDED_MODELS,
+        "dashscope": DASHSCOPE_RECOMMENDED_MODELS,
     })
 
 
@@ -1238,20 +1281,30 @@ def test_llm_settings():
     if data is None:
         return error_response("请提供JSON数据", "JSON body required", 400)
 
-    _PROVIDER_DEFAULTS = {
-        "lmstudio":   "http://localhost:1234/v1",
-        "ollama":     "http://localhost:11434/v1",
-        "openrouter": "https://openrouter.ai/api/v1",
-    }
-
     provider = (data.get("provider") or "lmstudio").lower()
-    base_url  = data.get("base_url") or _PROVIDER_DEFAULTS.get(provider, _PROVIDER_DEFAULTS["lmstudio"])
-    if provider in ("lmstudio", "ollama") and base_url:
-        clean_url = base_url.strip().rstrip("/")
-        if not clean_url.endswith("/v1"):
-            base_url = clean_url + "/v1"
+    if provider not in PROVIDER_DEFAULTS:
+        return jsonify({"connected": False, "model_id": None, "message": "不支持的 AI 服务商"})
 
-    api_key   = data.get("api_key") or ("lm-studio" if provider != "openrouter" else "")
+    base_url = _normalize_provider_base_url(provider, data.get("base_url"))
+    api_key = (data.get("api_key") or "").strip()
+    if provider in CLOUD_API_KEY_PROVIDERS:
+        if _is_masked_secret(api_key):
+            if provider == cfg.LLM_PROVIDER and cfg.LLM_API_KEY:
+                api_key = cfg.LLM_API_KEY
+            else:
+                return jsonify({
+                    "connected": False,
+                    "model_id": None,
+                    "message": "请重新填写当前云端服务的真实 API Key 后再测试。"
+                })
+        if not api_key:
+            return jsonify({"connected": False, "model_id": None,
+                            "message": "云端模型需要 API Key"})
+    elif provider == "lmstudio":
+        api_key = api_key or "lm-studio"
+    elif provider == "ollama":
+        api_key = api_key or "ollama"
+
     model     = data.get("model") or ""
 
     try:
@@ -1261,7 +1314,27 @@ def test_llm_settings():
             timeout=10,
             http_client=httpx.Client(verify=getattr(cfg, "VERIFY_SSL", True))
         )
-        models = client.models.list()
+        try:
+            models = client.models.list()
+        except Exception:
+            if not model:
+                raise
+            chat_kwargs = {
+                "model": model,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 8,
+                "temperature": 0,
+            }
+            extra_body = _cloud_test_extra_body(provider, base_url)
+            if extra_body:
+                chat_kwargs["extra_body"] = extra_body
+            client.chat.completions.create(**chat_kwargs)
+            return jsonify({
+                "connected": True,
+                "model_id": model,
+                "message": f"已通过一次简短请求连接：{model}"
+            })
+
         model_data = getattr(models, "data", None) or []
         if not model_data:
             if model:

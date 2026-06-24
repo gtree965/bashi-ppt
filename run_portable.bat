@@ -3,8 +3,8 @@ chcp 65001 >nul
 setlocal EnableExtensions EnableDelayedExpansion
 
 REM =========================================================
-REM Bashi PPT (巴适PPT) - Windows Portable Launcher
-REM Uses embedded Python — no system Python or npm required.
+REM Bashi PPT - Windows Portable Launcher
+REM Uses embedded Python - no system Python or npm required.
 REM =========================================================
 
 cd /d "%~dp0"
@@ -20,8 +20,8 @@ set "PYTHON_EXE=%EMBED_DIR%\python.exe"
 
 echo.
 echo  ========================================
-echo   巴适PPT v%APP_VERSION% (Windows Portable)
-echo   教师备课与可编辑课件助手
+echo   Bashi PPT v%APP_VERSION% (Windows Portable)
+echo   Teacher lesson-prep and editable PPTX assistant
 echo  ========================================
 echo.
 

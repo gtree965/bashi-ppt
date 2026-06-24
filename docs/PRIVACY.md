@@ -14,7 +14,8 @@ Local model software, proxies, remote image URLs, and update services may have t
 
 ## Cloud models
 
-When a cloud OpenAI-compatible endpoint is selected, the provider may receive:
+When Alibaba Cloud Bailian / DashScope, SiliconFlow, OpenRouter, or another
+cloud OpenAI-compatible endpoint is selected, the provider may receive:
 
 - topics and source material;
 - fact-extraction and confirmed-fact requests;

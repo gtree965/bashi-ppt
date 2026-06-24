@@ -16,7 +16,15 @@
 
 ### 云端模型
 
-OpenRouter 可直接在界面配置。其他 OpenAI 兼容服务可在应用目录的 `.env` 中填写服务地址、API Key 和模型 ID。
+设置界面可直接配置阿里云百炼、硅基流动、OpenRouter 和自定义 OpenAI 兼容接口。一般步骤是：
+
+1. 在服务商控制台创建 API Key；
+2. 在巴适PPT右上角齿轮中选择服务商；
+3. 粘贴 API Key；
+4. 选择推荐模型，或手动填写服务商页面上的 Model ID；
+5. 点击“测试连接”，成功后保存。
+
+阿里云百炼默认地址为 `https://dashscope.aliyuncs.com/compatible-mode/v1`，硅基流动默认地址为 `https://api.siliconflow.cn/v1`。通常不需要修改服务地址。
 
 云端通常更快，但材料会离开本机，并可能产生费用。
 

@@ -101,12 +101,18 @@ Local models keep lesson content on the computer, but their speed and output qua
 
 ### Cloud
 
-OpenRouter is available in the settings interface. Other OpenAI-compatible services can be configured in `.env` using:
+The settings panel directly supports:
+
+- **Alibaba Cloud Bailian / DashScope**: `https://dashscope.aliyuncs.com/compatible-mode/v1`
+- **SiliconFlow**: `https://api.siliconflow.cn/v1`
+- **OpenRouter**: `https://openrouter.ai/api/v1`
+- **Custom OpenAI-compatible endpoints** for other providers
 
 ```env
-LLM_BASE_URL=https://your-provider.example/v1
+LLM_PROVIDER=dashscope
+LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_API_KEY=your-api-key
-LLM_MODEL=provider-model-id
+LLM_MODEL=qwen3.7-plus
 ```
 
 When a cloud endpoint is used, prompts, source material, outlines, and speaker-note requests are sent to that provider. Review the provider’s terms, retention policy, geographic availability, and fees before using sensitive material.

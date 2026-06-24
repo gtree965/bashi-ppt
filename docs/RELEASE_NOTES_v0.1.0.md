@@ -21,13 +21,16 @@ Release date: **June 23, 2026**
 - 自动推荐页数，并允许手动覆盖；
 - 备课文章、大纲、逐页讲稿和 PPTX 导出；
 - 图示和可选 Pixabay 图片；
-- 单语/双语赞美诗歌词投影。
+- 单语/双语赞美诗歌词投影；
+- 设置界面直接支持阿里云百炼、硅基流动、OpenRouter 和自定义兼容接口。
 
 ### Windows 便携包
 
 下载 `Bashi-PPT-v0.1.0-Windows-Portable.zip`，完整解压后双击 `run_portable.bat`。
 
 便携包包含 Python 3.12、依赖、预构建前端、后端和用户文档；不包含 API Key、AI 模型、测试结果或内部规划资料。
+
+本版启动脚本保持 ASCII-only，以降低不同 Windows 终端代码页导致的乱码启动风险。
 
 云端模型会接收用户提交的材料。本地模型速度和质量取决于电脑硬件。请在使用敏感资料前阅读 [隐私与数据去向](PRIVACY_CN.md)。
 
@@ -55,12 +58,16 @@ Bashi PPT focuses on the work between source material and classroom delivery:
 - Editable PPTX rendering
 - Diagrams and optional Pixabay images
 - Single-language and bilingual hymn-lyrics decks
+- Settings-panel support for Alibaba Cloud Bailian / DashScope, SiliconFlow,
+  OpenRouter, and custom compatible endpoints
 
 ### Windows portable download
 
 Download `Bashi-PPT-v0.1.0-Windows-Portable.zip`, extract it completely, and run `run_portable.bat`.
 
 The package includes Python 3.12, required libraries, the prebuilt frontend, backend, renderer, and user documentation. It excludes API keys, AI models, generated presentations, tests, experiment results, and internal planning material.
+
+The Windows launcher is kept ASCII-only to avoid code-page related startup glitches on different terminals.
 
 Read [Privacy and Data Flow](PRIVACY.md) before using sensitive material with a cloud model.
 

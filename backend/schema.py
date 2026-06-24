@@ -47,9 +47,22 @@ ScenarioType = Literal["teaching", "church", "parents", "general"]
 LanguageType = Literal["zh", "en", "bilingual"]
 GenerationMode = Literal["creative", "grounded"]
 SlideCountMode = Literal["auto", "manual"]
+ProviderType = Literal["lmstudio", "ollama", "openrouter", "siliconflow", "dashscope", "custom"]
 
 VALID_SCENARIOS = ("teaching", "church", "parents", "general")
 VALID_LANGUAGES = ("zh", "en", "bilingual")
+
+PROVIDER_DEFAULTS: dict[str, str] = {
+    "lmstudio": "http://localhost:1234/v1",
+    "ollama": "http://localhost:11434/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "siliconflow": "https://api.siliconflow.cn/v1",
+    "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "custom": "",
+}
+
+LOCAL_PROVIDERS = {"lmstudio", "ollama"}
+CLOUD_API_KEY_PROVIDERS = {"openrouter", "siliconflow", "dashscope", "custom"}
 
 # =====================================================================
 # Pydantic models
@@ -493,6 +506,10 @@ def format_validation_errors(exc: ValidationError) -> tuple[str, str]:
             else:
                 zh_messages.append(f"{field_zh}格式无效")
                 en_messages.append(f"{field_en} has an invalid format")
+        elif error_type == "value_error":
+            message = str(error.get("msg", "Invalid value")).removeprefix("Value error, ")
+            zh_messages.append(message)
+            en_messages.append(message)
         else:
             message = error.get("msg", "Invalid value")
             zh_messages.append(f"{field_zh}无效: {message}")
@@ -525,24 +542,39 @@ OLLAMA_RECOMMENDED_MODELS = [
 ]
 
 OPENROUTER_RECOMMENDED_MODELS = [
+    {"id": "openrouter/free",                 "label": "Free Models Router（免费路由，质量会波动）"},
     {"id": "google/gemma-4-31b-it:free",      "label": "Gemma 4 31B（免费，高质量）"},
     {"id": "meta-llama/llama-3.3-70b-instruct:free", "label": "Llama 3.3 70B（免费，高质量）"},
     {"id": "qwen/qwen3-coder:free",           "label": "Qwen 3 Coder（免费，速度快）"},
     {"id": "meta-llama/llama-3.2-3b-instruct:free", "label": "Llama 3.2 3B（免费，轻量）"},
 ]
 
+SILICONFLOW_RECOMMENDED_MODELS = [
+    {"id": "Qwen/Qwen3.6-35B-A3B",        "label": "Qwen3.6 35B A3B（平衡、长上下文）"},
+    {"id": "deepseek-ai/DeepSeek-V4-Flash", "label": "DeepSeek V4 Flash（便宜、快速）"},
+    {"id": "deepseek-ai/DeepSeek-V4-Pro",   "label": "DeepSeek V4 Pro（更强、费用较高）"},
+    {"id": "pro/moonshotai/kimi-k2.6",      "label": "Kimi K2.6 Pro（强模型、费用较高）"},
+    {"id": "nex-agi/Nex-N2-Pro",            "label": "Nex N2 Pro（平台免费/促销以实际为准）"},
+]
+
+DASHSCOPE_RECOMMENDED_MODELS = [
+    {"id": "qwen3.7-plus", "label": "Qwen3.7 Plus（百炼，高质量）"},
+]
+
 
 class LLMSettingsRequest(BaseModel):
     """Request body for POST /api/settings/llm."""
 
-    provider: Literal["lmstudio", "ollama", "openrouter"] = "lmstudio"
+    provider: ProviderType = "lmstudio"
     model: str = Field(default="", description="Model identifier for the chosen provider")
-    api_key: Optional[str] = Field(default=None, description="API key (OpenRouter only)")
+    api_key: Optional[str] = Field(default=None, description="API key for cloud providers")
     base_url: Optional[str] = Field(default=None, description="Override base URL (advanced)")
     pixabay_api_key: Optional[str] = Field(default=None, description="Pixabay API Key")
 
     @model_validator(mode="after")
-    def validate_openrouter_key(self) -> "LLMSettingsRequest":
-        if self.provider == "openrouter" and not (self.api_key or "").strip():
-            raise ValueError("OpenRouter 需要 API Key / OpenRouter requires an API key")
+    def validate_provider_settings(self) -> "LLMSettingsRequest":
+        if self.provider in CLOUD_API_KEY_PROVIDERS and not (self.api_key or "").strip():
+            raise ValueError("云端模型需要 API Key / Cloud providers require an API key")
+        if self.provider == "custom" and not (self.base_url or "").strip():
+            raise ValueError("自定义接口需要服务地址 / Custom provider requires a base URL")
         return self
