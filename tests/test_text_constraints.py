@@ -13,6 +13,7 @@ from text_constraints import (
     text_display_units,
     truncate_to_display_limit,
 )
+from config import _rewrite_active_llm_lines
 
 
 class TestScriptAwareLength(unittest.TestCase):
@@ -119,6 +120,36 @@ class TestLLMProviderSettings(unittest.TestCase):
                 "api_key": "sk-test",
                 "model": "custom-model",
             })
+
+    def test_active_llm_block_is_moved_above_examples(self):
+        original = [
+            "# Bashi PPT v0.1.0 configuration",
+            "",
+            "# === LM Studio (default, local) ===",
+            "LLM_PROVIDER=dashscope",
+            "LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "LLM_API_KEY=sk-test",
+            "LLM_MODEL=qwen3.7-plus",
+            "",
+            "# === Alibaba Cloud Bailian / 阿里云百炼 DashScope (cloud example) ===",
+            "# LLM_PROVIDER=dashscope",
+        ]
+        rewritten = _rewrite_active_llm_lines(
+            original,
+            {
+                "LLM_PROVIDER": "dashscope",
+                "LLM_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "LLM_API_KEY": "sk-test",
+                "LLM_MODEL": "qwen3.7-plus",
+            },
+        )
+
+        self.assertIn("# === Active AI model settings (edited by the app) ===", rewritten)
+        self.assertNotIn("# === LM Studio (default, local) ===", rewritten)
+        self.assertLess(
+            rewritten.index("LLM_PROVIDER=dashscope"),
+            rewritten.index("# === Alibaba Cloud Bailian / 阿里云百炼 DashScope (cloud example) ==="),
+        )
 
 
 if __name__ == "__main__":
