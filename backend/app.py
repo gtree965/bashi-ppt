@@ -21,6 +21,7 @@ from schema import (
     SlideRecommendationRequest,
     GenerateNotesRequest,
     ArticleExportRequest,
+    ProjectSaveRequest,
     LyricsRequest,
     LLMSettingsRequest,
     LYRICS_LANGUAGE_OPTIONS,
@@ -41,6 +42,7 @@ from lyrics.chinese_script import ChineseScriptConversionUnavailableError, conve
 from article_export import build_article_export
 from image_search import rank_pixabay_hits
 from grounding_audit import audit_grounded_outline
+import project_store
 from slide_recommendation import recommend_from_material, recommend_slide_count
 from llm.client import (
     LLMReasoningOnlyError,
@@ -690,6 +692,62 @@ def export_article():
             "Error exporting prep article.",
             500,
         )
+
+
+@app.route("/api/projects", methods=["GET"])
+def list_projects_route():
+    """List saved project summaries (newest first). ``?all=1`` returns every project."""
+    show_all = request.args.get("all") in ("1", "true", "yes")
+    if show_all:
+        projects = project_store.list_projects(limit=None)
+    else:
+        try:
+            limit = int(request.args.get("limit", 5))
+        except (TypeError, ValueError):
+            limit = 5
+        projects = project_store.list_projects(limit=max(1, min(limit, 200)))
+    return jsonify({"success": True, "projects": projects})
+
+
+@app.route("/api/projects/<pid>", methods=["GET"])
+def get_project_route(pid):
+    """Return one full project (including its editable state)."""
+    try:
+        project = project_store.load_project(pid)
+    except project_store.ProjectStoreError:
+        return error_response("未找到该项目。", "Project not found.", 404)
+    return jsonify({"success": True, "project": project})
+
+
+@app.route("/api/projects", methods=["POST"])
+def save_project_route():
+    """Create or update (upsert by id) a local project snapshot."""
+    data = request.get_json(silent=True)
+    if data is None:
+        return error_response("请提供JSON数据", "JSON body required", 400)
+    try:
+        payload = ProjectSaveRequest.model_validate(data)
+    except ValidationError as exc:
+        message_zh, message_en = format_validation_errors(exc)
+        return error_response(message_zh, message_en, 422)
+    try:
+        meta = project_store.save_project(payload.model_dump())
+    except project_store.ProjectStoreError as exc:
+        return error_response("无法保存项目。", f"Could not save project: {exc}", 400)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected error saving project: %s", exc)
+        return error_response("保存项目时发生错误。", "Error saving project.", 500)
+    return jsonify({"success": True, **meta})
+
+
+@app.route("/api/projects/<pid>", methods=["DELETE"])
+def delete_project_route(pid):
+    """Delete one project file."""
+    try:
+        removed = project_store.delete_project(pid)
+    except project_store.ProjectStoreError:
+        return error_response("无效的项目编号。", "Invalid project id.", 400)
+    return jsonify({"success": True, "deleted": removed})
 
 
 def _parse_notes(raw_text: str) -> list[str] | None:

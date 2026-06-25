@@ -281,6 +281,26 @@ class ArticleExportRequest(BaseModel):
     format: Literal["md", "docx", "odt"] = Field(default="md")
 
 
+class ProjectSaveRequest(BaseModel):
+    """Validated payload for saving (upserting) a local project snapshot.
+
+    ``state`` is a lenient dict — the full frontend snapshot — so the editor can
+    evolve its shape without breaking the API. ``id`` is omitted on first save
+    and echoed back on later saves to update the same project in place.
+    """
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    id: str | None = Field(default=None, max_length=64)
+    title: str = Field(default="", max_length=200)
+    state: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_state_present(self):
+        if not self.state:
+            raise ValueError("Project state is required")
+        return self
+
+
 # =====================================================================
 # Lyrics schemas
 # =====================================================================

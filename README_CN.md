@@ -20,7 +20,7 @@
 4. 保留原生可编辑的文字、图片和图示；
 5. 把逐页讲稿写入 PowerPoint 备注区。
 
-首要服务对象是使用中文或中英混合材料备课的教师。产品仍处于 `v0.1.0` 共创试用阶段。
+首要服务对象是使用中文或中英混合材料备课的教师。产品仍处于 `v0.1.1` 共创试用阶段。
 
 ## 两条备课路径
 
@@ -82,7 +82,7 @@ Windows 便携包已经包含 Python 和所需 Python 库，不需要另装 Pyth
 
 ## Windows 便携版快速开始
 
-1. 下载 `Bashi-PPT-v0.1.0-Windows-Portable.zip`。
+1. 下载 `Bashi-PPT-v0.1.1-Windows-Portable.zip`。
 2. 将压缩包完整解压到普通、可写入的文件夹。
 3. 双击 `run_portable.bat`。
 4. 浏览器打开 `http://localhost:5100`。
@@ -159,7 +159,7 @@ python backend/app.py
 
 - 优先目标：Windows + PowerPoint / WPS Office
 - 代码运行：Windows、macOS、Linux
-- macOS/Linux 安装包：`v0.1.0` 暂采用 Python 手动安装
+- macOS/Linux 安装包：`v0.1.1` 暂采用 Python 手动安装
 - 正式输入范围：中文、英文、中英混合
 - 正式输出范围：简体中文、英文、中英双语
 - 其他语言：实验性支持
@@ -190,6 +190,7 @@ npm run dev
 - [English User Guide](docs/USER_GUIDE.md)
 - [隐私与数据去向](docs/PRIVACY_CN.md)
 - [Privacy and Data Flow](docs/PRIVACY.md)
+- [v0.1.1 发布说明](docs/RELEASE_NOTES_v0.1.1.md)
 - [v0.1.0 发布说明](docs/RELEASE_NOTES_v0.1.0.md)
 - [参与贡献](CONTRIBUTING.md)
 - [安全政策](SECURITY.md)

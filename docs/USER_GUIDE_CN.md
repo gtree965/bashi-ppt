@@ -1,4 +1,4 @@
-# 巴适PPT v0.1.0 使用指南
+# 巴适PPT v0.1.1 使用指南
 
 [English](USER_GUIDE.md) · [返回 README](../README_CN.md)
 

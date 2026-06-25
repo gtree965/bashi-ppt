@@ -25,7 +25,7 @@ VERSION_PATH = PROJECT_ROOT / "VERSION"
 APP_VERSION = (
     VERSION_PATH.read_text(encoding="utf-8").strip()
     if VERSION_PATH.exists()
-    else "0.1.0"
+    else "0.1.1"
 )
 
 # Default base URLs per provider

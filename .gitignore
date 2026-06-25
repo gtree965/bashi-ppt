@@ -15,3 +15,6 @@ slideforge.log
 /release/
 /*.pptx
 /test_outline_*.json
+# Local user projects (auto-saved editable snapshots) — never committed
+/projects/
+/scratch/

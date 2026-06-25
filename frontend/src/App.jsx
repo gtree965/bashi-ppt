@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Header from './components/Header';
 import TopicInput from './components/TopicInput';
 import GroundedFactReview from './components/GroundedFactReview';
@@ -8,12 +8,17 @@ import TemplateSelector from './components/TemplateSelector';
 import GenerateButton from './components/GenerateButton';
 import HymnStudio from './components/HymnStudio';
 import LLMSettings from './components/LLMSettings';
+import RecentProjects from './components/RecentProjects';
+import ProjectLibrary from './components/ProjectLibrary';
 import {
   generateOutline,
   prepareGroundedFacts,
   generateDraft,
   refineDraft,
   generatePptx,
+  listProjects,
+  getProject,
+  saveProject,
 } from './api/client';
 import { mermaidToPngDataUrl } from './utils/diagramRenderer';
 
@@ -71,6 +76,79 @@ function App() {
     factTable: [],
     audit: null,
   });
+  const [recentProjects, setRecentProjects] = useState([]);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const projectIdRef = useRef(null);
+
+  const refreshRecent = () => {
+    listProjects(5)
+      .then((data) => setRecentProjects(data.projects || []))
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    refreshRecent();
+  }, []);
+
+  const serializeProject = () => ({
+    inputParams: lastInputParams,
+    article,
+    outline,
+    scenario,
+    template,
+    bulletStyle,
+    selectedTheme,
+    outputLanguage,
+    generationContext,
+  });
+
+  // Auto-save (debounced) whenever an outline exists and the snapshot changes.
+  // Best-effort: failures are swallowed so saving never blocks editing.
+  useEffect(() => {
+    if (!outline) return undefined;
+    const handle = setTimeout(async () => {
+      try {
+        const title = outline?.title || lastInputParams?.topic || '未命名项目';
+        const data = await saveProject({
+          id: projectIdRef.current,
+          title,
+          state: serializeProject(),
+        });
+        if (data?.id) projectIdRef.current = data.id;
+        refreshRecent();
+      } catch {
+        // ignore — autosave is best-effort
+      }
+    }, 1500);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outline, article, lastInputParams, scenario, template, bulletStyle, selectedTheme, outputLanguage, generationContext]);
+
+  const handleOpenProject = async (id) => {
+    try {
+      const data = await getProject(id);
+      const project = data.project || {};
+      const state = project.state || {};
+      projectIdRef.current = project.id || null;
+      setLastInputParams(state.inputParams || null);
+      setArticle(state.article || '');
+      setOutline(state.outline || null);
+      setScenario(state.scenario || 'teaching');
+      setTemplate(state.template || 'teaching');
+      setBulletStyle(state.bulletStyle || 'dot');
+      setSelectedTheme(state.selectedTheme || 'clean_blue');
+      setOutputLanguage(state.outputLanguage || 'zh');
+      setGenerationContext(
+        state.generationContext || { mode: 'creative', factTable: [], audit: null }
+      );
+      setError(null);
+      setWarnings([]);
+      setShowLibrary(false);
+      setStep(STEPS.EDITING);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
   const handleTopicSubmit = async ({
     topic,
@@ -318,6 +396,9 @@ function App() {
     setPreparedFacts([]);
     setGroundedBusy(false);
     setGenerationContext({ mode: 'creative', factTable: [], audit: null });
+    projectIdRef.current = null;  // next generation starts a fresh project
+    setShowLibrary(false);
+    refreshRecent();
   };
 
   return (
@@ -404,6 +485,14 @@ function App() {
           <div className="mt-8 space-y-6">
             {mode === MODES.PRESENTATION && (
               <>
+                {step === STEPS.IDLE && (
+                  <RecentProjects
+                    projects={recentProjects}
+                    onOpen={handleOpenProject}
+                    onBrowseAll={() => setShowLibrary(true)}
+                  />
+                )}
+
                 {(step === STEPS.IDLE
                   || step === STEPS.PREPARING_FACTS
                   || step === STEPS.GENERATING_OUTLINE
@@ -486,6 +575,12 @@ function App() {
           </footer>
         </div>
       </div>
+
+      <ProjectLibrary
+        isOpen={showLibrary}
+        onClose={() => setShowLibrary(false)}
+        onOpen={handleOpenProject}
+      />
 
       {/* Settings slide-out overlay */}
       {showSettings && (

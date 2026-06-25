@@ -1,4 +1,4 @@
-# Bashi PPT v0.1.0 User Guide
+# Bashi PPT v0.1.1 User Guide
 
 [简体中文](USER_GUIDE_CN.md) · [Back to README](../README.md)
 

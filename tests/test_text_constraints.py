@@ -123,7 +123,7 @@ class TestLLMProviderSettings(unittest.TestCase):
 
     def test_active_llm_block_is_moved_above_examples(self):
         original = [
-            "# Bashi PPT v0.1.0 configuration",
+            "# Bashi PPT v0.1.1 configuration",
             "",
             "# === LM Studio (default, local) ===",
             "LLM_PROVIDER=dashscope",

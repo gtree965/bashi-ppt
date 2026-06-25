@@ -9,7 +9,7 @@ REM =========================================================
 
 cd /d "%~dp0"
 
-set "APP_VERSION=0.1.0"
+set "APP_VERSION=0.1.1"
 if exist "%~dp0VERSION" set /p APP_VERSION=<"%~dp0VERSION"
 set "LOGFILE=%~dp0launch_log.txt"
 echo [%date% %time%] Launcher started > "%LOGFILE%"

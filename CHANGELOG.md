@@ -2,6 +2,20 @@
 
 All notable user-visible changes to Bashi PPT are documented here.
 
+## v0.1.1 — 2026-06-25
+
+Major feature update introducing local project persistence and project library.
+
+### Project persistence
+
+- Added a file-based project store that auto-saves progress (outline, topic, references, slides, and speaker notes) locally under `projects/` as JSON files.
+- Automatically saves projects in the background (1.5-second debounce) to prevent data loss.
+- Implemented path-traversal validation (allowing only `[A-Za-z0-9_-]` characters for IDs) and a 2MB payload limit on project files.
+- Added a "Recent Projects" dashboard showing up to 5 of the most recently edited projects on the homepage.
+- Added a "Project Library" modal displaying all past projects, with search-by-title capabilities.
+- Opening a project fully restores editing state, including references and generated outline/speaker notes.
+- Restored projects are bumped to the top of the "Recent Projects" list.
+
 ## v0.1.0 — 2026-06-23
 
 First public co-creation release.

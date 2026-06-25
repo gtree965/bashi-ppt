@@ -82,7 +82,7 @@ The Windows package includes Python and the required Python libraries. Node.js i
 
 ## Windows portable quick start
 
-1. Download `Bashi-PPT-v0.1.0-Windows-Portable.zip`.
+1. Download `Bashi-PPT-v0.1.1-Windows-Portable.zip`.
 2. Extract the entire archive to a normal writable folder.
 3. Double-click `run_portable.bat`.
 4. Open `http://localhost:5100`.
@@ -185,7 +185,7 @@ npm run build
 
 - Primary target: Windows with PowerPoint or WPS Office
 - Code path: Windows, macOS, and Linux
-- macOS/Linux packaging: manual Python installation in v0.1.0
+- macOS/Linux packaging: manual Python installation in v0.1.1
 - Official source/output languages: Chinese, English, and Chinese-English mixed content
 - Other languages: experimental
 - Keynote and LibreOffice may render some PPTX details differently
@@ -196,6 +196,7 @@ npm run build
 - [中文使用指南](docs/USER_GUIDE_CN.md)
 - [Privacy and Data Flow](docs/PRIVACY.md)
 - [隐私与数据去向](docs/PRIVACY_CN.md)
+- [Release Notes v0.1.1](docs/RELEASE_NOTES_v0.1.1.md)
 - [Release Notes v0.1.0](docs/RELEASE_NOTES_v0.1.0.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)

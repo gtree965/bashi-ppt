@@ -46,6 +46,7 @@ function Copy-ReleaseItem([string]$RelativePath) {
     $source = Join-Path $repoRoot $RelativePath
     $destination = Join-Path $stagingRoot $RelativePath
     $parent = Split-Path -Parent $destination
+    Write-Host "Copying: $source -> $destination"
     if ($parent) {
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
@@ -74,6 +75,7 @@ $backendFiles = @(
     "backend\config.py",
     "backend\grounding_audit.py",
     "backend\image_search.py",
+    "backend\project_store.py",
     "backend\requirements.txt",
     "backend\schema.py",
     "backend\slide_recommendation.py",
@@ -106,7 +108,8 @@ Get-ChildItem -LiteralPath $stagingRoot -Recurse -Directory |
     Where-Object { $_.Name -eq "__pycache__" } |
     Sort-Object FullName -Descending |
     Remove-Item -Recurse -Force
-Get-ChildItem -LiteralPath $stagingRoot -Recurse -File -Include *.pyc,*.pyo |
+Get-ChildItem -LiteralPath $stagingRoot -Recurse -File |
+    Where-Object { $_.Extension -in '.pyc', '.pyo' } |
     Remove-Item -Force
 
 if (Test-Path -LiteralPath (Join-Path $stagingRoot ".env")) {

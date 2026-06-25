@@ -27,6 +27,36 @@ export async function getTemplates() {
   return res.json();
 }
 
+// --- Projects: local, auto-saved editable project snapshots ---
+export async function listProjects(limit = 5) {
+  const res = await fetch(`${API_BASE}/projects?limit=${encodeURIComponent(limit)}`);
+  return parseJsonResponse(res);
+}
+
+export async function listAllProjects() {
+  const res = await fetch(`${API_BASE}/projects?all=1`);
+  return parseJsonResponse(res);
+}
+
+export async function getProject(id) {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(id)}`);
+  return parseJsonResponse(res);
+}
+
+export async function saveProject({ id, title, state }) {
+  const res = await fetch(`${API_BASE}/projects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id || null, title: title || '', state }),
+  });
+  return parseJsonResponse(res);
+}
+
+export async function deleteProject(id) {
+  const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  return parseJsonResponse(res);
+}
+
 export async function recommendSlides({
   topic,
   referenceText = '',
